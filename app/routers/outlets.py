@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models.outlet import Outlet
 from app.schemas.outlet import CreateOutletRequest, OutletResponse, UpdateOutletRequest
 from app.services.audit_service import write_audit
+from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/outlets", tags=["master-data"])
 
@@ -26,12 +27,15 @@ def _active(db: Session):
 
 
 @router.get("", response_model=List[OutletResponse])
-def list_outlets(db: Session = Depends(get_db)):
+def list_outlets(
+    db: Session = Depends(get_db),
+    _: UserResponse = Depends(get_current_user),
+):
     return [_to_response(o) for o in _active(db).order_by(Outlet.name).all()]
 
 
 @router.post("", response_model=OutletResponse, status_code=201)
-def create_outlet(req: CreateOutletRequest, db: Session = Depends(get_db)):
+def create_outlet(req: CreateOutletRequest, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("admin"))):
     existing = _active(db).filter(Outlet.code == req.code.upper()).first()
     if existing:
         raise HTTPException(status_code=409, detail=f"Outlet code '{req.code.upper()}' already exists")
@@ -46,7 +50,7 @@ def create_outlet(req: CreateOutletRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/{outlet_id}", response_model=OutletResponse)
-def get_outlet(outlet_id: str, db: Session = Depends(get_db)):
+def get_outlet(outlet_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
     outlet = _active(db).filter(Outlet.id == outlet_id).first()
     if not outlet:
         raise HTTPException(status_code=404, detail="Outlet not found")
@@ -54,7 +58,7 @@ def get_outlet(outlet_id: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/{outlet_id}", response_model=OutletResponse)
-def update_outlet(outlet_id: str, req: UpdateOutletRequest, db: Session = Depends(get_db)):
+def update_outlet(outlet_id: str, req: UpdateOutletRequest, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("admin"))):
     outlet = _active(db).filter(Outlet.id == outlet_id).first()
     if not outlet:
         raise HTTPException(status_code=404, detail="Outlet not found")
@@ -74,7 +78,7 @@ def update_outlet(outlet_id: str, req: UpdateOutletRequest, db: Session = Depend
 
 
 @router.delete("/{outlet_id}", status_code=204)
-def delete_outlet(outlet_id: str, db: Session = Depends(get_db)):
+def delete_outlet(outlet_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("admin"))):
     outlet = _active(db).filter(Outlet.id == outlet_id).first()
     if not outlet:
         raise HTTPException(status_code=404, detail="Outlet not found")

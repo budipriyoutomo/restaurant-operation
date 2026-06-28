@@ -97,6 +97,23 @@ def get_current_user(
     return _user_to_response(user)
 
 
+def require_roles(*allowed: str):
+    """Return a dependency that requires the caller to have one of the given roles.
+
+    Usage:
+        _: UserResponse = Depends(require_roles("admin"))
+        _: UserResponse = Depends(require_roles("manager", "admin"))
+    """
+    def _check(current: UserResponse = Depends(get_current_user)) -> UserResponse:
+        if current.role not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Requires role: {' or '.join(allowed)}",
+            )
+        return current
+    return _check
+
+
 def get_optional_user(
     token: Optional[str] = Depends(_oauth2),
     db: Session = Depends(get_db),

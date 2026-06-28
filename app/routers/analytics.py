@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models.approval import ApprovalRequest
 from app.models.issue import Issue
 from app.models.task import Task
+from app.services.auth_service import UserResponse, get_current_user
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -25,7 +26,7 @@ def _sla_breach(due_date, status_value: str) -> bool:
 
 
 @router.get("/summary")
-def get_summary(db: Session = Depends(get_db)):
+def get_summary(db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
     issues = db.query(Issue).all()
 
     issue_by_status: Dict[str, int] = {}

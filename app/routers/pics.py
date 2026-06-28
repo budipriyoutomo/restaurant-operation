@@ -9,6 +9,7 @@ from app.models.category import Category
 from app.models.pic import PIC
 from app.schemas.pic import CreatePICRequest, PICResponse, UpdatePICRequest
 from app.services.audit_service import write_audit
+from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/pics", tags=["master-data"])
 
@@ -40,12 +41,12 @@ def _resolve_categories(db: Session, category_ids: List[str]) -> List[Category]:
 
 
 @router.get("", response_model=List[PICResponse])
-def list_pics(db: Session = Depends(get_db)):
+def list_pics(db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
     return [_to_response(p) for p in _active_pics(db).order_by(PIC.name).all()]
 
 
 @router.post("", response_model=PICResponse, status_code=201)
-def create_pic(req: CreatePICRequest, db: Session = Depends(get_db)):
+def create_pic(req: CreatePICRequest, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("admin"))):
     existing = _active_pics(db).filter(PIC.email == req.email).first()
     if existing:
         raise HTTPException(status_code=409, detail=f"Email '{req.email}' already exists")
@@ -62,7 +63,7 @@ def create_pic(req: CreatePICRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/{pic_id}", response_model=PICResponse)
-def get_pic(pic_id: str, db: Session = Depends(get_db)):
+def get_pic(pic_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
     pic = _active_pics(db).filter(PIC.id == pic_id).first()
     if not pic:
         raise HTTPException(status_code=404, detail="PIC not found")
@@ -70,7 +71,7 @@ def get_pic(pic_id: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/{pic_id}", response_model=PICResponse)
-def update_pic(pic_id: str, req: UpdatePICRequest, db: Session = Depends(get_db)):
+def update_pic(pic_id: str, req: UpdatePICRequest, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("admin"))):
     pic = _active_pics(db).filter(PIC.id == pic_id).first()
     if not pic:
         raise HTTPException(status_code=404, detail="PIC not found")
@@ -94,7 +95,7 @@ def update_pic(pic_id: str, req: UpdatePICRequest, db: Session = Depends(get_db)
 
 
 @router.delete("/{pic_id}", status_code=204)
-def delete_pic(pic_id: str, db: Session = Depends(get_db)):
+def delete_pic(pic_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("admin"))):
     pic = _active_pics(db).filter(PIC.id == pic_id).first()
     if not pic:
         raise HTTPException(status_code=404, detail="PIC not found")

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.task import Task
 from app.schemas.task import TaskResponse, UpdateTaskRequest
+from app.services.auth_service import UserResponse, get_current_user
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -30,6 +31,7 @@ def _task_to_response(task: Task) -> TaskResponse:
 def list_tasks(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    _: UserResponse = Depends(get_current_user),
 ):
     """List all Tasks, optionally filtered by status (FR-9 note: no POST — Tasks come from Issues)."""
     query = db.query(Task)
@@ -40,7 +42,7 @@ def list_tasks(
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)
-def update_task(task_id: str, req: UpdateTaskRequest, db: Session = Depends(get_db)):
+def update_task(task_id: str, req: UpdateTaskRequest, db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
     """Update Task status (FR-11). Intentionally does not cascade to parent Issue in MVP."""
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:

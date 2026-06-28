@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models.category import Category
 from app.schemas.category import CategoryResponse, CreateCategoryRequest, UpdateCategoryRequest
 from app.services.audit_service import write_audit
+from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/categories", tags=["master-data"])
 
@@ -26,12 +27,12 @@ def _active(db: Session):
 
 
 @router.get("", response_model=List[CategoryResponse])
-def list_categories(db: Session = Depends(get_db)):
+def list_categories(db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
     return [_to_response(c) for c in _active(db).order_by(Category.name).all()]
 
 
 @router.post("", response_model=CategoryResponse, status_code=201)
-def create_category(req: CreateCategoryRequest, db: Session = Depends(get_db)):
+def create_category(req: CreateCategoryRequest, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("admin"))):
     cat = Category(name=req.name, description=req.description, type=req.type)
     db.add(cat)
     db.flush()
@@ -43,7 +44,7 @@ def create_category(req: CreateCategoryRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/{category_id}", response_model=CategoryResponse)
-def get_category(category_id: str, db: Session = Depends(get_db)):
+def get_category(category_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
     cat = _active(db).filter(Category.id == category_id).first()
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -51,7 +52,7 @@ def get_category(category_id: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/{category_id}", response_model=CategoryResponse)
-def update_category(category_id: str, req: UpdateCategoryRequest, db: Session = Depends(get_db)):
+def update_category(category_id: str, req: UpdateCategoryRequest, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("admin"))):
     cat = _active(db).filter(Category.id == category_id).first()
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -71,7 +72,7 @@ def update_category(category_id: str, req: UpdateCategoryRequest, db: Session = 
 
 
 @router.delete("/{category_id}", status_code=204)
-def delete_category(category_id: str, db: Session = Depends(get_db)):
+def delete_category(category_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("admin"))):
     cat = _active(db).filter(Category.id == category_id).first()
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")

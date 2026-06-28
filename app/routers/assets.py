@@ -9,6 +9,7 @@ from app.database import get_db
 from app.models.asset import Asset, AssetNumberSequence
 from app.schemas.asset import AssetResponse, CreateAssetRequest, UpdateAssetRequest
 from app.services.audit_service import write_audit
+from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/assets", tags=["cmms"])
 
@@ -62,6 +63,7 @@ def list_assets(
     outlet: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    _: UserResponse = Depends(get_current_user),
 ):
     query = db.query(Asset)
     if outlet:
@@ -72,7 +74,7 @@ def list_assets(
 
 
 @router.post("", response_model=AssetResponse, status_code=201)
-def create_asset(req: CreateAssetRequest, db: Session = Depends(get_db)):
+def create_asset(req: CreateAssetRequest, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("manager", "admin"))):
     number = _next_asset_number(db)
     asset = Asset(
         number=number,
@@ -97,7 +99,7 @@ def create_asset(req: CreateAssetRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/{asset_id}", response_model=AssetResponse)
-def get_asset(asset_id: str, db: Session = Depends(get_db)):
+def get_asset(asset_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -105,7 +107,7 @@ def get_asset(asset_id: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/{asset_id}", response_model=AssetResponse)
-def update_asset(asset_id: str, req: UpdateAssetRequest, db: Session = Depends(get_db)):
+def update_asset(asset_id: str, req: UpdateAssetRequest, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("manager", "admin"))):
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -142,7 +144,7 @@ def update_asset(asset_id: str, req: UpdateAssetRequest, db: Session = Depends(g
 
 
 @router.delete("/{asset_id}", status_code=204)
-def delete_asset(asset_id: str, db: Session = Depends(get_db)):
+def delete_asset(asset_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("manager", "admin"))):
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")

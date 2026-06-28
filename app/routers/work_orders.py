@@ -9,6 +9,7 @@ from app.database import get_db
 from app.models.asset import Asset, WorkOrder, WorkOrderNumberSequence
 from app.schemas.asset import CreateWorkOrderRequest, UpdateWorkOrderRequest, WorkOrderResponse
 from app.services.audit_service import write_audit
+from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/work-orders", tags=["cmms"])
 
@@ -67,6 +68,7 @@ def list_work_orders(
     status: Optional[str] = Query(None),
     outlet: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    _: UserResponse = Depends(get_current_user),
 ):
     query = db.query(WorkOrder)
     if asset_id:
@@ -81,7 +83,7 @@ def list_work_orders(
 
 
 @router.post("", response_model=WorkOrderResponse, status_code=201)
-def create_work_order(req: CreateWorkOrderRequest, db: Session = Depends(get_db)):
+def create_work_order(req: CreateWorkOrderRequest, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("manager", "admin"))):
     asset = db.query(Asset).filter(Asset.id == req.assetId).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -111,7 +113,7 @@ def create_work_order(req: CreateWorkOrderRequest, db: Session = Depends(get_db)
 
 
 @router.get("/{wo_id}", response_model=WorkOrderResponse)
-def get_work_order(wo_id: str, db: Session = Depends(get_db)):
+def get_work_order(wo_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
     wo = db.query(WorkOrder).filter(WorkOrder.id == wo_id).first()
     if not wo:
         raise HTTPException(status_code=404, detail="Work order not found")
@@ -119,7 +121,7 @@ def get_work_order(wo_id: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/{wo_id}", response_model=WorkOrderResponse)
-def update_work_order(wo_id: str, req: UpdateWorkOrderRequest, db: Session = Depends(get_db)):
+def update_work_order(wo_id: str, req: UpdateWorkOrderRequest, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("manager", "admin"))):
     wo = db.query(WorkOrder).filter(WorkOrder.id == wo_id).first()
     if not wo:
         raise HTTPException(status_code=404, detail="Work order not found")
@@ -147,7 +149,7 @@ def update_work_order(wo_id: str, req: UpdateWorkOrderRequest, db: Session = Dep
 
 
 @router.delete("/{wo_id}", status_code=204)
-def delete_work_order(wo_id: str, db: Session = Depends(get_db)):
+def delete_work_order(wo_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(require_roles("manager", "admin"))):
     wo = db.query(WorkOrder).filter(WorkOrder.id == wo_id).first()
     if not wo:
         raise HTTPException(status_code=404, detail="Work order not found")
