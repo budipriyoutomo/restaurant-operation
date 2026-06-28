@@ -28,16 +28,16 @@ engine = create_engine(_DB_URL)
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def create_tables():
-    """Create all tables once per test session."""
+    """Create all tables once per test session (only runs when db fixture is used)."""
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture()
-def db():
+def db(create_tables):
     """Yield a DB session that is rolled back after each test."""
     connection = engine.connect()
     transaction = connection.begin()

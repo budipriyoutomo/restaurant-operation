@@ -12,11 +12,14 @@ from sqlalchemy.orm import Session
 
 from app.core.category_defaults import get_approval_type
 from app.models.approval import ApprovalRequest, ApprovalNumberSequence
-from app.models.enums import IssueStatusEnum, PriorityEnum
+from app.models.asset import Asset, WorkOrder, WorkOrderNumberSequence
+from app.models.enums import IssueStatusEnum, PriorityEnum, WorkOrderStatusEnum
 from app.models.issue import Issue, IssueNumberSequence
 from app.models.task import Task, TaskNumberSequence
 from app.schemas.issue import CreateIssueRequest, IssueResponse, UpdateIssueRequest
 from app.services.audit_service import write_audit
+from app.services.notification_service import notify_issue_created, notify_issue_status_changed
+from app.services.work_order_service import APPROVAL_THRESHOLD
 
 
 # ---------------------------------------------------------------------------
@@ -65,9 +68,36 @@ def _parse_date(date_str: Optional[str]):
         return None
 
 
+def _next_wo_number(db: Session) -> str:
+    year = datetime.now().year
+    result = db.execute(
+        text("""
+            INSERT INTO work_order_number_sequences (year, last_seq)
+            VALUES (:year, 1)
+            ON CONFLICT (year) DO UPDATE
+              SET last_seq = work_order_number_sequences.last_seq + 1
+            RETURNING last_seq
+        """),
+        {"year": year},
+    )
+    seq = result.scalar_one()
+    return f"WO-{year}-{seq:05d}"
+
+
 def _issue_to_response(issue: Issue) -> IssueResponse:
     status_value = issue.status.value if hasattr(issue.status, "value") else str(issue.status)
     sla_breach = _compute_sla_breach(issue.due_date, status_value)
+
+    # Find auto-generated corrective work order (if any)
+    wo_id = None
+    if hasattr(issue, "work_orders") and issue.work_orders:
+        corrective = next(
+            (w for w in issue.work_orders
+             if (w.type.value if hasattr(w.type, "value") else str(w.type)) == "corrective"),
+            None,
+        )
+        if corrective:
+            wo_id = str(corrective.id)
 
     return IssueResponse(
         id=str(issue.id),
@@ -84,12 +114,78 @@ def _issue_to_response(issue: Issue) -> IssueResponse:
         slaBreach=sla_breach,
         taskIds=[str(t.id) for t in (issue.tasks or [])],
         approvalId=str(issue.approval.id) if issue.approval else None,
+        workOrderId=wo_id,
     )
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def _create_corrective_wo(
+    db: Session,
+    issue: Issue,
+    issue_number: str,
+    req: CreateIssueRequest,
+) -> WorkOrder:
+    """Create a corrective Work Order linked to the issue (same transaction).
+
+    If estimated_cost > APPROVAL_THRESHOLD:
+      - WO status = on-hold, requires_approval = True
+      - Create ApprovalRequest (type=maintenance) + 2 default steps
+      - Link WO.approval_id → the new ApprovalRequest
+    """
+    from app.services.approval_service import create_approval_with_steps
+
+    # Resolve the asset (optional — issue can exist without an asset)
+    asset = None
+    if req.assetId:
+        asset = db.query(Asset).filter(Asset.id == req.assetId).first()
+
+    asset_name = asset.name if asset else req.title
+    wo_number  = _next_wo_number(db)
+
+    needs_approval = (
+        req.estimatedCost is not None and req.estimatedCost > APPROVAL_THRESHOLD
+    )
+    wo_status = WorkOrderStatusEnum.on_hold.value if needs_approval else "scheduled"
+
+    wo = WorkOrder(
+        number=wo_number,
+        type="corrective",
+        asset_id=asset.id if asset else None,
+        asset_name=asset_name,
+        outlet=req.outlet,
+        issue_id=issue.id,
+        issue_number=issue_number,
+        title=f"[Korektif] {req.title}",
+        description=req.description,
+        priority=req.priority,
+        status=wo_status,
+        assignee=req.assignee or "Unassigned",
+        estimated_cost=req.estimatedCost,
+        requires_approval=needs_approval,
+    )
+    db.add(wo)
+    db.flush()  # need wo.id before creating approval
+
+    if needs_approval:
+        approval = create_approval_with_steps(
+            db,
+            issue_id=issue.id,
+            issue_number=issue_number,
+            title=f"Approval biaya: {req.title}",
+            approval_type="maintenance",
+            description=req.description,
+            requester=req.assignee or "Unassigned",
+            outlet=req.outlet,
+            amount=str(req.estimatedCost),
+            flush_only=True,   # stay in caller's transaction
+        )
+        wo.approval_id = approval.id
+
+    return wo
+
 
 def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
     """Create an Issue and optionally auto-generate a linked Task and/or Approval.
@@ -135,8 +231,8 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
         )
         db.add(task)
 
-    # Auto-generate ApprovalRequest (FR-6)
-    if req.generateApproval:
+    # Auto-generate ApprovalRequest (FR-6, non-Maintenance categories)
+    if req.generateApproval and req.category != "Maintenance":
         approval_number = _next_number(db, "APR", "approval_number_sequences")
         approval_type = get_approval_type(req.category)
         approval = ApprovalRequest(
@@ -154,8 +250,16 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
         )
         db.add(approval)
 
+    # Auto-generate corrective Work Order for Maintenance issues (Tier 1 §1.3)
+    if req.category == "Maintenance" and req.generateWorkOrder:
+        _create_corrective_wo(db, issue, issue_number, req)
+
     db.commit()
     db.refresh(issue)
+
+    notify_issue_created(db, issue_number, req.title, req.outlet, issue.id)
+    db.commit()
+
     return _issue_to_response(issue)
 
 
@@ -215,6 +319,7 @@ def update_issue(db: Session, issue_id: str, req: UpdateIssueRequest) -> Optiona
             old_value={"status": old_status, "number": issue.number},
             new_value={"status": new_status, "number": issue.number},
         )
+        notify_issue_status_changed(db, issue.number, issue.title, old_status, new_status, issue.id)
     elif any(v is not None for v in [req.title, req.description, req.assignee, req.priority, req.dueDate]):
         write_audit(
             db,

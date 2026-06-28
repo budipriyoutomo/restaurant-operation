@@ -48,12 +48,28 @@ class ApprovalTypeEnum(str, enum.Enum):
     marketing = "marketing"
     training = "training"
     asset_purchase = "asset-purchase"
+    maintenance = "maintenance"
 
 
 class ApprovalStatusEnum(str, enum.Enum):
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
+
+
+class ApprovalStepStatusEnum(str, enum.Enum):
+    """Values match approval_step_status Postgres enum and frontend ApprovalStepStatus type."""
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+    skipped = "skipped"
+
+
+class ApproverRoleEnum(str, enum.Enum):
+    """Values match approver_role Postgres enum (staff | manager | admin)."""
+    staff = "staff"
+    manager = "manager"
+    admin = "admin"
 
 
 class OutletStatusEnum(str, enum.Enum):
@@ -82,5 +98,6 @@ class WorkOrderTypeEnum(str, enum.Enum):
 class WorkOrderStatusEnum(str, enum.Enum):
     scheduled = "scheduled"
     in_progress = "in-progress"
+    on_hold = "on-hold"
     completed = "completed"
     cancelled = "cancelled"

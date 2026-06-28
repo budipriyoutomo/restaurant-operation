@@ -51,6 +51,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class UpdateUserRequest(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def hash_password(plain: str) -> str:
@@ -144,6 +150,36 @@ def register_user(db: Session, req: RegisterRequest) -> UserResponse:
     db.commit()
     db.refresh(user)
     return _user_to_response(user)
+
+
+def update_user(db: Session, user_id: str, req: UpdateUserRequest, caller_id: str) -> UserResponse:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if req.name is not None:
+        user.name = req.name
+    if req.role is not None:
+        allowed_roles = {"staff", "manager", "admin"}
+        if req.role not in allowed_roles:
+            raise HTTPException(status_code=422, detail=f"Invalid role. Must be one of: {', '.join(allowed_roles)}")
+        user.role = req.role
+    if req.is_active is not None:
+        if not req.is_active and str(user.id) == caller_id:
+            raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
+        user.is_active = req.is_active
+    db.commit()
+    db.refresh(user)
+    return _user_to_response(user)
+
+
+def delete_user(db: Session, user_id: str, caller_id: str) -> None:
+    if user_id == caller_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_active = False
+    db.commit()
 
 
 def login_user(db: Session, req: LoginRequest) -> TokenResponse:

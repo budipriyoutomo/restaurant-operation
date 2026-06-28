@@ -18,6 +18,7 @@ class IssueResponse(BaseModel):
     slaBreach: bool
     taskIds: List[str] = []
     approvalId: Optional[str] = None
+    workOrderId: Optional[str] = None   # populated when a WO is auto-generated
 
 
 class CreateIssueRequest(BaseModel):
@@ -32,6 +33,10 @@ class CreateIssueRequest(BaseModel):
     generateTask: bool = True
     generateApproval: bool = False
     approvalAmount: Optional[str] = None
+    # CMMS fields (Tier 1)
+    generateWorkOrder: bool = False
+    assetId: Optional[str] = None
+    estimatedCost: Optional[float] = None
 
 
 class UpdateIssueRequest(BaseModel):

@@ -5,7 +5,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
-from app.models.enums import ApprovalTypeEnum, ApprovalStatusEnum
+from app.models.enums import ApprovalTypeEnum, ApprovalStatusEnum, ApprovalStepStatusEnum, ApproverRoleEnum
 
 
 def _sa_enum(py_enum, pg_name):
@@ -43,7 +43,47 @@ class ApprovalRequest(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
+    # Added in migration 013
+    current_step_order = Column(Integer, nullable=False, default=1)
+
     issue = relationship("Issue", back_populates="approval")
+    steps = relationship(
+        "ApprovalStep",
+        back_populates="approval_request",
+        cascade="all, delete-orphan",
+        order_by="ApprovalStep.step_order",
+        lazy="selectin",
+    )
+
+
+class ApprovalStep(Base):
+    __tablename__ = "approval_steps"
+
+    id                  = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    approval_request_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_requests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    step_order       = Column(Integer, nullable=False)
+    approver_role    = Column(
+        SAEnum(ApproverRoleEnum, values_callable=lambda x: [e.value for e in x],
+               name="approver_role", create_type=False),
+        nullable=False,
+    )
+    approver_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    status           = Column(
+        SAEnum(ApprovalStepStatusEnum, values_callable=lambda x: [e.value for e in x],
+               name="approval_step_status", create_type=False),
+        nullable=False,
+        default=ApprovalStepStatusEnum.pending,
+    )
+    decided_by  = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    decided_at  = Column(TIMESTAMP(timezone=True), nullable=True)
+    comment     = Column(Text, nullable=True)
+    created_at  = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    approval_request = relationship("ApprovalRequest", back_populates="steps")
 
 
 class ApprovalNumberSequence(Base):
