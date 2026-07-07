@@ -179,7 +179,7 @@ def _create_corrective_wo(
             description=req.description,
             requester=req.assignee or "Unassigned",
             outlet=req.outlet,
-            amount=str(req.estimatedCost),
+            amount=int(req.estimatedCost) if req.estimatedCost is not None else None,
             flush_only=True,   # stay in caller's transaction
         )
         wo.approval_id = approval.id

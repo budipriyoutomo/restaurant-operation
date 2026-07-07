@@ -21,6 +21,7 @@ class AssetResponse(BaseModel):
     installDate: Optional[str] = None
     lastPM: Optional[str] = None
     nextPM: Optional[str] = None
+    purchaseCost: Optional[int] = None    # IDR integer
     createdAt: str
 
 
@@ -35,6 +36,7 @@ class CreateAssetRequest(BaseModel):
     installDate: Optional[str] = None
     lastPM: Optional[str] = None
     nextPM: Optional[str] = None
+    purchaseCost: Optional[int] = None
 
 
 class UpdateAssetRequest(BaseModel):
@@ -48,6 +50,7 @@ class UpdateAssetRequest(BaseModel):
     installDate: Optional[str] = None
     lastPM: Optional[str] = None
     nextPM: Optional[str] = None
+    purchaseCost: Optional[int] = None
 
 
 class AssetHistoryResponse(BaseModel):
@@ -62,9 +65,9 @@ class AssetSummaryResponse(BaseModel):
     """Aggregate stats for GET /api/assets/{id}/summary."""
     totalWorkOrders: int
     totalDowntimeHours: float
-    totalLaborCost: float
-    totalPartsCost: float
-    totalCost: float
+    totalLaborCost: int           # IDR integer
+    totalPartsCost: int           # IDR integer
+    totalCost: int                # IDR integer
     lastPM: Optional[str] = None
     nextPM: Optional[str] = None
     workOrdersLast90Days: int
@@ -115,12 +118,17 @@ class WorkOrderAttachmentCreate(BaseModel):
 
 class WorkOrderCostUpdate(BaseModel):
     laborHours: Optional[float] = None
-    laborCost: Optional[float] = None
-    partsCost: Optional[float] = None
+    laborCost: Optional[int] = None       # IDR integer
+    partsCost: Optional[int] = None       # IDR integer
 
 
 class WorkOrderTransitionRequest(BaseModel):
     targetStatus: str   # must be a valid WorkOrderStatusEnum value
+
+
+class AssignVendorRequest(BaseModel):
+    vendorId: str
+    slaDue: Optional[str] = None    # ISO date deadline
 
 
 # ---------------------------------------------------------------------------
@@ -149,12 +157,17 @@ class WorkOrderResponse(BaseModel):
     downtimeStart: Optional[str] = None
     downtimeEnd: Optional[str] = None
     laborHours: Optional[float] = None
-    laborCost: float = 0
-    partsCost: float = 0
-    totalCost: float = 0
-    estimatedCost: Optional[float] = None
+    laborCost: int = 0                    # IDR integer
+    partsCost: int = 0                    # IDR integer
+    totalCost: int = 0                    # IDR integer
+    estimatedCost: Optional[int] = None   # IDR integer
     requiresApproval: bool = False
     approvalId: Optional[str] = None
+    # Vendor / SLA (Tier 3)
+    vendorId: Optional[str] = None
+    vendorName: Optional[str] = None
+    slaDue: Optional[str] = None
+    slaMet: Optional[bool] = None
 
 
 class WorkOrderDetailResponse(WorkOrderResponse):
@@ -177,7 +190,7 @@ class CreateWorkOrderRequest(BaseModel):
     priority: str = "medium"
     assignee: str = "Unassigned"
     scheduledDate: Optional[str] = None
-    estimatedCost: Optional[float] = None
+    estimatedCost: Optional[int] = None   # IDR integer
 
 
 class UpdateWorkOrderRequest(BaseModel):

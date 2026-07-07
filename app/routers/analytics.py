@@ -1,16 +1,52 @@
 from datetime import date
-from typing import Dict
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.approval import ApprovalRequest
 from app.models.issue import Issue
 from app.models.task import Task
-from app.services.auth_service import UserResponse, get_current_user
+from app.services import cmms_analytics_service as cmms_svc
+from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+
+
+# ---------------------------------------------------------------------------
+# CMMS analytics response shapes (mirror frontend lib/types.ts)
+# ---------------------------------------------------------------------------
+
+class AssetAnalytics(BaseModel):
+    assetId: str
+    assetName: str
+    outlet: str
+    workOrders: int
+    failures: int
+    mttrHours: float
+    mtbfHours: float
+    uptimePct: float
+    totalDowntimeHours: float
+    totalCost: int
+    repairCost: int
+    purchaseCost: Optional[int] = None
+    repairVsReplace: Optional[bool] = None
+
+
+class FleetAnalytics(BaseModel):
+    assetCount: int
+    avgMttrHours: float
+    avgMtbfHours: float
+    avgUptimePct: float
+    totalCost: int
+    replaceCandidates: int
+
+
+class CMMSAnalyticsResponse(BaseModel):
+    perAsset: List[AssetAnalytics]
+    fleet: FleetAnalytics
 
 
 def _val(field) -> str:
@@ -83,3 +119,17 @@ def get_summary(db: Session = Depends(get_db), _: UserResponse = Depends(get_cur
             "by_type":   approval_by_type,
         },
     }
+
+
+@router.get("/cmms", response_model=CMMSAnalyticsResponse)
+def get_cmms_analytics(
+    outlet: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    _: UserResponse = Depends(require_roles("manager", "admin")),
+):
+    """Per-asset reliability & cost metrics + fleet roll-up (Tier 3).
+
+    MTTR / MTBF / uptime% / total cost per asset, plus a repair-vs-replace flag
+    when the asset's purchase cost is known.
+    """
+    return cmms_svc.compute_fleet_analytics(db, outlet=outlet)

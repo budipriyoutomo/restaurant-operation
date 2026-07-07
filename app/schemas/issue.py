@@ -32,11 +32,11 @@ class CreateIssueRequest(BaseModel):
     dueDate: Optional[str] = None
     generateTask: bool = True
     generateApproval: bool = False
-    approvalAmount: Optional[str] = None
+    approvalAmount: Optional[int] = None  # IDR integer
     # CMMS fields (Tier 1)
     generateWorkOrder: bool = False
     assetId: Optional[str] = None
-    estimatedCost: Optional[float] = None
+    estimatedCost: Optional[int] = None   # IDR integer
 
 
 class UpdateIssueRequest(BaseModel):

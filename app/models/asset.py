@@ -32,6 +32,7 @@ class Asset(Base):
     install_date = Column(Date)
     last_pm = Column(Date)
     next_pm = Column(Date)
+    purchase_cost = Column(Integer, nullable=True)                # IDR integer — for repair-vs-replace (migration 017)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -71,19 +72,34 @@ class WorkOrder(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    # New columns — migration 012
+    # New columns — migration 012 / 014
     downtime_start    = Column(TIMESTAMP(timezone=True), nullable=True)
     downtime_end      = Column(TIMESTAMP(timezone=True), nullable=True)
     labor_hours       = Column(Numeric(8, 2), nullable=True)
-    labor_cost        = Column(Numeric(14, 2), nullable=False, default=0)
-    parts_cost        = Column(Numeric(14, 2), nullable=False, default=0)
-    estimated_cost    = Column(Numeric(14, 2), nullable=True)
+    labor_cost        = Column(Integer, nullable=False, default=0)          # IDR integer
+    parts_cost        = Column(Integer, nullable=False, default=0)          # IDR integer
+    estimated_cost    = Column(Integer, nullable=True)                      # IDR integer
+    currency          = Column(String(3), nullable=False, default="IDR", server_default="IDR")
     requires_approval = Column(Boolean, nullable=False, default=False)
     approval_id       = Column(
         UUID(as_uuid=True),
         ForeignKey("approval_requests.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    # Preventive-maintenance link + idempotency key — migration 015
+    pm_schedule_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("pm_schedules.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    pm_period_key  = Column(String(20), nullable=True)   # e.g. the due date that spawned it
+
+    # Vendor / external maintenance + SLA — migration 020
+    vendor_id   = Column(UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="SET NULL"), nullable=True)
+    vendor_name = Column(String(200), nullable=True)     # denormalized
+    sla_due     = Column(Date, nullable=True)
+    sla_met     = Column(Boolean, nullable=True)         # set when WO completes
 
     asset    = relationship("Asset", back_populates="work_orders")
     issue    = relationship("Issue", foreign_keys=[issue_id])
@@ -98,6 +114,12 @@ class WorkOrder(Base):
     )
     attachments = relationship(
         "WorkOrderAttachment",
+        back_populates="work_order",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    parts_used = relationship(
+        "WorkOrderPart",
         back_populates="work_order",
         cascade="all, delete-orphan",
         lazy="selectin",

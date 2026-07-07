@@ -101,3 +101,16 @@ class WorkOrderStatusEnum(str, enum.Enum):
     on_hold = "on-hold"
     completed = "completed"
     cancelled = "cancelled"
+
+
+class PMIntervalTypeEnum(str, enum.Enum):
+    """Values match pm_interval_type Postgres enum and frontend PMIntervalType type."""
+    days = "days"
+    weeks = "weeks"
+    months = "months"
+
+
+class PMTriggerTypeEnum(str, enum.Enum):
+    """Values match pm_trigger_type Postgres enum and frontend PMTriggerType type."""
+    calendar = "calendar"
+    meter = "meter"

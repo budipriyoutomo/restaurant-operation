@@ -1,11 +1,10 @@
 """Test configuration.
 
-Uses the live DATABASE_URL from the environment (same .env as the app),
-but wraps every test in a transaction that gets rolled back, so the DB
-is left clean after each test run.
+Uses DATABASE_URL from the environment (same .env as the app).
+TEST_DATABASE_URL overrides it if set.
 
-Requires the DB schema to already exist (run migrations first).
-Set TEST_DATABASE_URL in .env to point at a dedicated test database.
+Every test gets a DB session that is rolled back after each test, so the DB
+is left clean. Run migrations first before running the test suite.
 """
 
 import os
@@ -17,6 +16,43 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base, get_db
 from app.main import app
+
+
+# ---------------------------------------------------------------------------
+# Auth helpers — used by integration / e2e tests that need real JWT tokens
+# ---------------------------------------------------------------------------
+
+def register_and_login(client: TestClient, email: str, password: str, role: str) -> dict:
+    """Register a user and return Authorization headers with a valid JWT."""
+    client.post("/api/auth/register", json={
+        "email": email, "name": f"Test {role.capitalize()}",
+        "password": password, "role": role,
+    })
+    res = client.post("/api/auth/login", json={"email": email, "password": password})
+    token = res.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def seed_user_headers(db, email: str, role: str, name: str = None) -> dict:
+    """Insert a user row directly and return Authorization headers with a valid JWT.
+
+    Unlike register_and_login, this needs no pre-existing admin — it seeds the
+    user straight into the (rolled-back) test session, so it works on a fresh DB
+    even though POST /api/auth/register is admin-guarded.
+    """
+    from app.models.user import User
+    from app.services.auth_service import create_access_token, hash_password
+
+    user = User(
+        email=email,
+        name=name or f"Test {role.capitalize()}",
+        password_hash=hash_password("Pass1234!"),
+        role=role,
+    )
+    db.add(user)
+    db.flush()
+    token = create_access_token(str(user.id), user.email, role)
+    return {"Authorization": f"Bearer {token}"}
 
 # Use TEST_DATABASE_URL if set, otherwise fall back to DATABASE_URL
 _DB_URL = os.getenv("TEST_DATABASE_URL") or os.getenv(

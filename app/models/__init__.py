@@ -5,6 +5,10 @@ from app.models.outlet import Outlet
 from app.models.category import Category
 from app.models.pic import PIC, pic_categories
 from app.models.asset import Asset, AssetNumberSequence, WorkOrder, WorkOrderNumberSequence
+from app.models.pm_schedule import PMSchedule
+from app.models.approval_policy import ApprovalPolicy
+from app.models.part import Part, WorkOrderPart
+from app.models.meter_reading import MeterReading
 
 __all__ = [
     "Issue", "IssueNumberSequence",
@@ -15,4 +19,8 @@ __all__ = [
     "PIC", "pic_categories",
     "Asset", "AssetNumberSequence",
     "WorkOrder", "WorkOrderNumberSequence",
+    "PMSchedule",
+    "ApprovalPolicy",
+    "Part", "WorkOrderPart",
+    "MeterReading",
 ]

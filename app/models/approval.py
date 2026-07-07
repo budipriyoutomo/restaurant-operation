@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP, ForeignKey
+from sqlalchemy import Boolean, Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -35,7 +35,8 @@ class ApprovalRequest(Base):
     requester = Column(String(200), default="")
     outlet = Column(String(200), default="")
     requested_date = Column(Date)
-    amount = Column(String(100))                            # stored as-is e.g. "RM 45,000"
+    amount = Column(Integer, nullable=True)                 # IDR integer, e.g. 1500000
+    currency = Column(String(3), nullable=False, default="IDR", server_default="IDR")
     status = Column(_sa_enum(ApprovalStatusEnum, "approval_status"), nullable=False, default=ApprovalStatusEnum.pending)
     decided_at = Column(TIMESTAMP(timezone=True))
     decided_by = Column(String(200))
@@ -45,6 +46,10 @@ class ApprovalRequest(Base):
 
     # Added in migration 013
     current_step_order = Column(Integer, nullable=False, default=1)
+
+    # Delegation + auto-escalation (migration 021)
+    current_step_since = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    escalated = Column(Boolean, nullable=False, default=False, server_default="false")
 
     issue = relationship("Issue", back_populates="approval")
     steps = relationship(

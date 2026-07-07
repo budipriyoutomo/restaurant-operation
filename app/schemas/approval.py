@@ -26,11 +26,13 @@ class ApprovalResponse(BaseModel):
     requester: str
     outlet: str
     requestedDate: Optional[str] = None
-    amount: Optional[str] = None
+    amount: Optional[int] = None          # IDR integer; format "Rp X" only in frontend
+    currency: str = "IDR"
     status: str
     issueId: str
     issueNumber: str
     currentStepOrder: int = 1
+    escalated: bool = False
     steps: List[ApprovalStepResponse] = []
 
 
@@ -39,3 +41,19 @@ class DecideApprovalRequest(BaseModel):
     decision: str               # "approved" or "rejected"
     comment: Optional[str] = None
     decidedBy: Optional[str] = None
+
+
+class DelegateApprovalRequest(BaseModel):
+    """Body for PATCH /api/approvals/{id}/delegate — reassign the active step."""
+    toUserId: Optional[str] = None
+    toRole: Optional[str] = None
+
+
+class EscalateStaleRequest(BaseModel):
+    """Body for POST /api/approvals/escalate-stale."""
+    thresholdDays: Optional[int] = None
+
+
+class EscalateStaleResponse(BaseModel):
+    escalated: int
+    approvalIds: List[str] = []

@@ -61,6 +61,7 @@ def notify_by_name(
 # ---------------------------------------------------------------------------
 
 def notify_issue_created(db: Session, issue_number: str, title: str, outlet: str, issue_id) -> None:
+    # TODO: outlet-scoping — filter recipients to managers/admins assigned to `outlet` (Tier 2)
     notify_roles(
         db,
         roles=["manager", "admin"],
@@ -84,6 +85,40 @@ def notify_issue_status_changed(
         ntype=ntype,
         entity_type="issues",
         entity_id=issue_id,
+    )
+
+
+def notify_next_approver(
+    db: Session,
+    approval_number: str,
+    issue_number: str,
+    approver_role: str,
+    approval_id,
+    approver_user_id=None,
+) -> None:
+    """Notify whoever must decide the newly-active approval step.
+
+    If the step is pinned to a specific user (`approver_user_id`), notify only
+    them; otherwise fan out to every active user holding `approver_role`.
+    Called when an approval advances to its next step (Tier 2.3).
+    """
+    title = f"Approval menunggu Anda: {approval_number}"
+    message = f"Langkah approval untuk {issue_number} menunggu keputusan Anda."
+
+    if approver_user_id is not None:
+        user = db.query(User).filter(User.id == approver_user_id, User.is_active == True).first()  # noqa: E712
+        if user:
+            _create(db, user.id, title, message, "warning", "approvals", approval_id)
+            return
+
+    notify_roles(
+        db,
+        roles=[approver_role],
+        title=title,
+        message=message,
+        ntype="warning",
+        entity_type="approvals",
+        entity_id=approval_id,
     )
 
 

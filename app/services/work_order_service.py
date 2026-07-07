@@ -45,7 +45,8 @@ from app.services.audit_service import write_audit
 # Constants
 # ---------------------------------------------------------------------------
 
-APPROVAL_THRESHOLD: float = 1_000_000  # Rp 1 juta — trigger approval above this
+APPROVAL_THRESHOLD: int = 1_000_000  # Rp 1 juta — trigger approval above this
+# TODO: policy-engine — load from settings table per-outlet instead of hardcoded constant (Tier 2)
 
 # Work orders whose status counts as "active" for the purpose of asset sync.
 _ACTIVE_STATUSES = {"scheduled", "in-progress", "on-hold"}
@@ -88,8 +89,8 @@ def can_transition(current: WorkOrderStatusEnum, target: WorkOrderStatusEnum) ->
 # Cost & downtime helpers (pure — no DB)
 # ---------------------------------------------------------------------------
 
-def compute_total_cost(labor_cost: float, parts_cost: float) -> float:
-    return float(labor_cost or 0) + float(parts_cost or 0)
+def compute_total_cost(labor_cost: int, parts_cost: int) -> int:
+    return int(labor_cost or 0) + int(parts_cost or 0)
 
 
 def compute_downtime_hours(
@@ -107,8 +108,8 @@ def compute_downtime_hours(
 # ---------------------------------------------------------------------------
 
 def wo_to_response(wo: WorkOrder) -> WorkOrderResponse:
-    labor  = float(wo.labor_cost  or 0)
-    parts  = float(wo.parts_cost  or 0)
+    labor  = int(wo.labor_cost  or 0)
+    parts  = int(wo.parts_cost  or 0)
     return WorkOrderResponse(
         id=str(wo.id),
         number=wo.number,
@@ -132,9 +133,13 @@ def wo_to_response(wo: WorkOrder) -> WorkOrderResponse:
         laborCost=labor,
         partsCost=parts,
         totalCost=compute_total_cost(labor, parts),
-        estimatedCost=float(wo.estimated_cost) if wo.estimated_cost is not None else None,
+        estimatedCost=int(wo.estimated_cost) if wo.estimated_cost is not None else None,
         requiresApproval=bool(wo.requires_approval),
         approvalId=str(wo.approval_id) if wo.approval_id else None,
+        vendorId=str(wo.vendor_id) if wo.vendor_id else None,
+        vendorName=wo.vendor_name,
+        slaDue=wo.sla_due.isoformat() if wo.sla_due else None,
+        slaMet=wo.sla_met,
     )
 
 
@@ -203,11 +208,20 @@ def transition_work_order(
         wo.downtime_end = now
         wo.labor_cost  = wo.labor_cost  or 0
         wo.parts_cost  = wo.parts_cost  or 0
+        if wo.completed_date is None:
+            wo.completed_date = now.date()
+        # SLA verdict for vendor work (Tier 3): met if completed on/before due
+        if wo.sla_due is not None:
+            wo.sla_met = wo.completed_date <= wo.sla_due
         # total_cost is a computed field in the schema — not stored separately
 
-    # Asset status sync
+    # Asset status sync (corrective WOs drive the operational/maintenance state)
     if wo.asset_id and wo_type == "corrective":
         _sync_asset_status(db, wo)
+
+    # Preventive completion → refresh the asset's PM dates (Todo-CMMS.md §2.1)
+    if target_val == "completed" and wo_type == "preventive" and wo.asset_id:
+        _sync_asset_pm_dates(db, wo)
 
     write_audit(
         db,
@@ -221,6 +235,20 @@ def transition_work_order(
     db.commit()
     db.refresh(wo)
     return wo
+
+
+def _sync_asset_pm_dates(db: Session, wo: WorkOrder) -> None:
+    """On preventive-WO completion, set asset.last_pm = completion date and
+    asset.next_pm = the linked schedule's (already-advanced) next_due_date."""
+    asset = db.query(Asset).filter(Asset.id == wo.asset_id).first()
+    if not asset:
+        return
+    asset.last_pm = wo.completed_date or datetime.now(timezone.utc).date()
+    if wo.pm_schedule_id:
+        from app.models.pm_schedule import PMSchedule
+        sched = db.query(PMSchedule).filter(PMSchedule.id == wo.pm_schedule_id).first()
+        if sched and sched.next_due_date:
+            asset.next_pm = sched.next_due_date
 
 
 def _sync_asset_status(db: Session, wo: WorkOrder) -> None:

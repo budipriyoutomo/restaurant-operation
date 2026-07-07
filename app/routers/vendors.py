@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.vendor import Vendor
+from app.services import vendor_maintenance_service as vendor_svc
 from app.services.auth_service import UserResponse, get_current_user
 
 router = APIRouter(prefix="/api/vendors", tags=["procurement"])
@@ -101,6 +102,16 @@ def create_vendor(
     return _to_response(vendor)
 
 
+class VendorPerformanceResponse(BaseModel):
+    vendorId: str
+    totalAssigned: int
+    completed: int
+    onTime: int
+    onTimePct: float
+    avgResolutionDays: float
+    openWorkOrders: int
+
+
 @router.get("/{vendor_id}", response_model=VendorResponse)
 def get_vendor(
     vendor_id: str,
@@ -111,6 +122,19 @@ def get_vendor(
     if not v:
         raise HTTPException(status_code=404, detail="Vendor not found")
     return _to_response(v)
+
+
+@router.get("/{vendor_id}/performance", response_model=VendorPerformanceResponse)
+def get_vendor_performance(
+    vendor_id: str,
+    db: Session = Depends(get_db),
+    _: UserResponse = Depends(get_current_user),
+):
+    """WO-level performance stats for a vendor (SLA on-time %, resolution time)."""
+    v = db.query(Vendor).filter(Vendor.id == vendor_id).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    return vendor_svc.vendor_performance(db, vendor_id)
 
 
 @router.patch("/{vendor_id}", response_model=VendorResponse)

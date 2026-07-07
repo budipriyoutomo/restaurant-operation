@@ -2,14 +2,24 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.asset import Asset, AssetNumberSequence
-from app.schemas.asset import AssetResponse, CreateAssetRequest, UpdateAssetRequest
+from app.models.asset import Asset, AssetNumberSequence, WorkOrder
+from app.models.meter_reading import MeterReading
+from app.schemas.asset import (
+    AssetHistoryResponse,
+    AssetResponse,
+    AssetSummaryResponse,
+    CreateAssetRequest,
+    UpdateAssetRequest,
+)
+from app.schemas.pm_schedule import CreateMeterReadingRequest, MeterReadingResponse
+from app.services import work_order_service as wo_svc
 from app.services.audit_service import write_audit
 from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.work_order_service import compute_downtime_hours
 
 router = APIRouter(prefix="/api/assets", tags=["cmms"])
 
@@ -54,6 +64,7 @@ def _to_response(asset: Asset) -> AssetResponse:
         installDate=asset.install_date.isoformat() if asset.install_date else None,
         lastPM=asset.last_pm.isoformat() if asset.last_pm else None,
         nextPM=asset.next_pm.isoformat() if asset.next_pm else None,
+        purchaseCost=asset.purchase_cost,
         createdAt=asset.created_at.isoformat() if asset.created_at else "",
     )
 
@@ -88,6 +99,7 @@ def create_asset(req: CreateAssetRequest, db: Session = Depends(get_db), _: User
         install_date=_parse_date(req.installDate),
         last_pm=_parse_date(req.lastPM),
         next_pm=_parse_date(req.nextPM),
+        purchase_cost=req.purchaseCost,
     )
     db.add(asset)
     db.flush()
@@ -134,6 +146,8 @@ def update_asset(asset_id: str, req: UpdateAssetRequest, db: Session = Depends(g
         asset.last_pm = _parse_date(req.lastPM)
     if req.nextPM is not None:
         asset.next_pm = _parse_date(req.nextPM)
+    if req.purchaseCost is not None:
+        asset.purchase_cost = req.purchaseCost
 
     write_audit(db, table_name="assets", record_id=str(asset.id), action="update",
                 old_value=old,
@@ -152,3 +166,137 @@ def delete_asset(asset_id: str, db: Session = Depends(get_db), _: UserResponse =
                 old_value={"number": asset.number, "name": asset.name})
     db.delete(asset)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# GET /{asset_id}/history — paginated work order list for an asset
+# ---------------------------------------------------------------------------
+
+@router.get("/{asset_id}/history", response_model=AssetHistoryResponse)
+def get_asset_history(
+    asset_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: UserResponse = Depends(get_current_user),
+):
+    """Return paginated work orders for an asset, newest first."""
+    asset = db.query(Asset).filter(Asset.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    query = (
+        db.query(WorkOrder)
+        .filter(WorkOrder.asset_id == asset_id)
+        .order_by(WorkOrder.created_at.desc())
+    )
+    total = query.count()
+    wos = query.offset((page - 1) * page_size).limit(page_size).all()
+
+    return AssetHistoryResponse(
+        items=[wo_svc.wo_to_response(wo) for wo in wos],
+        total=total,
+        page=page,
+        pageSize=page_size,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /{asset_id}/summary — aggregated cost, downtime, PM dates
+# ---------------------------------------------------------------------------
+
+@router.get("/{asset_id}/summary", response_model=AssetSummaryResponse)
+def get_asset_summary(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    _: UserResponse = Depends(get_current_user),
+):
+    """Return aggregate maintenance stats for an asset."""
+    asset = db.query(Asset).filter(Asset.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    wos = db.query(WorkOrder).filter(WorkOrder.asset_id == asset_id).all()
+
+    total_labor   = sum(int(wo.labor_cost  or 0) for wo in wos)
+    total_parts   = sum(int(wo.parts_cost  or 0) for wo in wos)
+    total_cost    = total_labor + total_parts
+    total_downtime = sum(
+        compute_downtime_hours(wo.downtime_start, wo.downtime_end)
+        for wo in wos
+    )
+
+    # Count WOs created in the last 90 days
+    from datetime import date, timedelta
+    cutoff = datetime.now().date() - timedelta(days=90)
+    recent_count = sum(
+        1 for wo in wos
+        if wo.created_at and wo.created_at.date() >= cutoff
+    )
+
+    return AssetSummaryResponse(
+        totalWorkOrders=len(wos),
+        totalDowntimeHours=round(total_downtime, 2),
+        totalLaborCost=total_labor,
+        totalPartsCost=total_parts,
+        totalCost=total_cost,
+        lastPM=asset.last_pm.isoformat() if asset.last_pm else None,
+        nextPM=asset.next_pm.isoformat() if asset.next_pm else None,
+        workOrdersLast90Days=recent_count,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Meter readings (meter-based PM, Tier 3)
+# ---------------------------------------------------------------------------
+
+def _reading_to_response(r: MeterReading) -> MeterReadingResponse:
+    return MeterReadingResponse(
+        id=str(r.id),
+        assetId=str(r.asset_id),
+        value=int(r.value),
+        note=r.note,
+        recordedBy=str(r.recorded_by) if r.recorded_by else None,
+        recordedAt=r.recorded_at.isoformat() if r.recorded_at else "",
+    )
+
+
+@router.get("/{asset_id}/meter-readings", response_model=List[MeterReadingResponse])
+def list_meter_readings(
+    asset_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _: UserResponse = Depends(get_current_user),
+):
+    if not db.query(Asset).filter(Asset.id == asset_id).first():
+        raise HTTPException(status_code=404, detail="Asset not found")
+    readings = (
+        db.query(MeterReading)
+        .filter(MeterReading.asset_id == asset_id)
+        .order_by(MeterReading.recorded_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [_reading_to_response(r) for r in readings]
+
+
+@router.post("/{asset_id}/meter-readings", response_model=MeterReadingResponse, status_code=201)
+def create_meter_reading(
+    asset_id: str,
+    req: CreateMeterReadingRequest,
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    if not db.query(Asset).filter(Asset.id == asset_id).first():
+        raise HTTPException(status_code=404, detail="Asset not found")
+    import uuid as _uuid
+    recorder = None
+    try:
+        recorder = _uuid.UUID(current_user.id)
+    except (ValueError, TypeError):
+        recorder = None
+    reading = MeterReading(asset_id=asset_id, value=req.value, note=req.note, recorded_by=recorder)
+    db.add(reading)
+    db.commit()
+    db.refresh(reading)
+    return _reading_to_response(reading)
