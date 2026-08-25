@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Text, Numeric, Integer, Date, TIMESTAMP
+from sqlalchemy import ForeignKey, Column, String, Text, Numeric, Integer, Date, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -14,6 +14,9 @@ class TrainingProgram(Base):
     description      = Column(Text, nullable=True)
     target_role      = Column(String(100), nullable=False, default="staff")
     outlet           = Column(String(200), nullable=True)
+    # Real FK alongside the denormalised name (migration 024). Nullable:
+    # NULL means "not tied to one outlet" (shared / All Outlets).
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     trainer          = Column(String(200), nullable=True)
     scheduled_date   = Column(Date, nullable=True)
     duration_hours   = Column(Numeric(5, 1), nullable=True)

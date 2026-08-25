@@ -9,6 +9,14 @@ from app.models.pm_schedule import PMSchedule
 from app.models.approval_policy import ApprovalPolicy
 from app.models.part import Part, WorkOrderPart
 from app.models.meter_reading import MeterReading
+from app.models.idempotency import IdempotencyKey
+from app.models.procurement import (
+    PurchaseRequest, PurchaseRequestItem,
+    PurchaseOrder, PurchaseOrderItem,
+    GoodsReceipt, GoodsReceiptItem,
+    ProcurementNumberSequence,
+)
+from app.models.budget import Budget
 
 __all__ = [
     "Issue", "IssueNumberSequence",
@@ -23,4 +31,10 @@ __all__ = [
     "ApprovalPolicy",
     "Part", "WorkOrderPart",
     "MeterReading",
+    "IdempotencyKey",
+    "PurchaseRequest", "PurchaseRequestItem",
+    "PurchaseOrder", "PurchaseOrderItem",
+    "GoodsReceipt", "GoodsReceiptItem",
+    "ProcurementNumberSequence",
+    "Budget",
 ]

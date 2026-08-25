@@ -11,7 +11,7 @@ from app.services.approval_policy_service import resolve_policy_steps
 
 def policy(**kw):
     kw.setdefault("is_active", True)
-    kw.setdefault("outlet", None)
+    kw.setdefault("outlet_id", None)
     kw.setdefault("min_amount", None)
     kw.setdefault("max_amount", None)
     kw.setdefault("created_at", None)
@@ -71,17 +71,17 @@ class TestAmountTiers:
 class TestSpecificity:
     def test_outlet_specific_beats_global(self):
         pols = [
-            policy(approval_type="maintenance", steps=MANAGER_ONLY, outlet=None),
-            policy(approval_type="maintenance", steps=MANAGER_ADMIN, outlet="Bandung"),
+            policy(approval_type="maintenance", steps=MANAGER_ONLY, outlet_id=None),
+            policy(approval_type="maintenance", steps=MANAGER_ADMIN, outlet_id="BDG-ID"),
         ]
-        assert resolve_policy_steps(pols, "maintenance", 500_000, outlet="Bandung") == MANAGER_ADMIN
+        assert resolve_policy_steps(pols, "maintenance", 500_000, outlet_id="BDG-ID") == MANAGER_ADMIN
 
     def test_global_used_when_no_outlet_match(self):
         pols = [
-            policy(approval_type="maintenance", steps=MANAGER_ONLY, outlet=None),
-            policy(approval_type="maintenance", steps=MANAGER_ADMIN, outlet="Bandung"),
+            policy(approval_type="maintenance", steps=MANAGER_ONLY, outlet_id=None),
+            policy(approval_type="maintenance", steps=MANAGER_ADMIN, outlet_id="BDG-ID"),
         ]
-        assert resolve_policy_steps(pols, "maintenance", 500_000, outlet="Jakarta") == MANAGER_ONLY
+        assert resolve_policy_steps(pols, "maintenance", 500_000, outlet_id="JKT-ID") == MANAGER_ONLY
 
 
 class TestNormalization:

@@ -39,14 +39,16 @@ def resolve_policy_steps(
     policies: list,
     approval_type: str,
     amount: Optional[int],
-    outlet: Optional[str] = None,
+    outlet_id=None,
 ) -> Optional[List[dict]]:
     """Return the best-matching policy's steps as a sorted list of
     {"order": int, "role": str}, or None if nothing matches.
 
     `policies` is any iterable of objects/dicts exposing: is_active, approval_type,
-    min_amount, max_amount, outlet, steps (and optionally created_at). Only active
-    policies of the right type whose amount range and outlet match are considered.
+    min_amount, max_amount, outlet_id, steps (and optionally created_at). Only
+    active policies of the right type whose amount range and outlet match are
+    considered. Matching is on outlet_id (FK), not the display name — a renamed
+    outlet must not silently stop matching its own policies.
 
     Tie-break (most specific first):
       1. outlet-specific policy beats an all-outlets policy
@@ -67,8 +69,8 @@ def resolve_policy_steps(
         p_type = p_type.value if hasattr(p_type, "value") else p_type
         if p_type != approval_type:
             continue
-        p_outlet = get(p, "outlet")
-        if p_outlet is not None and p_outlet != outlet:
+        p_outlet = get(p, "outlet_id")
+        if p_outlet is not None and p_outlet != outlet_id:
             continue
         if not _amount_matches(get(p, "min_amount"), get(p, "max_amount"), amount_eff):
             continue
@@ -81,8 +83,8 @@ def resolve_policy_steps(
     POS_INF = float("inf")
 
     def sort_key(p):
-        p_outlet = get(p, "outlet")
-        outlet_specific = 1 if (p_outlet is not None and p_outlet == outlet) else 0
+        p_outlet = get(p, "outlet_id")
+        outlet_specific = 1 if (p_outlet is not None and p_outlet == outlet_id) else 0
         min_amt = get(p, "min_amount")
         max_amt = get(p, "max_amount")
         created = get(p, "created_at")
@@ -123,11 +125,11 @@ def resolve_steps_for_request(
     db: Session,
     approval_type: str,
     amount: Optional[int],
-    outlet: Optional[str] = None,
+    outlet_id=None,
 ) -> Optional[List[dict]]:
     """Load candidate policies and resolve steps, or None if no policy matches."""
     policies = active_policies_for_type(db, approval_type)
-    return resolve_policy_steps(policies, approval_type, amount, outlet)
+    return resolve_policy_steps(policies, approval_type, amount, outlet_id)
 
 
 def policy_to_response(p: ApprovalPolicy) -> ApprovalPolicyResponse:

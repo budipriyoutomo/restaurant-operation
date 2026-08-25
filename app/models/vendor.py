@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Boolean, Text, TIMESTAMP
+from sqlalchemy import ForeignKey, Column, String, Boolean, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -17,6 +17,9 @@ class Vendor(Base):
     contact_email = Column(String(200), nullable=True)
     address       = Column(Text, nullable=True)
     outlet        = Column(String(200), nullable=True)
+    # Real FK alongside the denormalised name (migration 024). Nullable:
+    # NULL means "not tied to one outlet" (shared / All Outlets).
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     is_active     = Column(Boolean, nullable=False, default=True)
     notes         = Column(Text, nullable=True)
     created_at    = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)

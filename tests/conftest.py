@@ -10,6 +10,7 @@ is left clean. Run migrations first before running the test suite.
 import os
 import pytest
 
+from dotenv import load_dotenv
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -22,43 +23,97 @@ from app.main import app
 # Auth helpers — used by integration / e2e tests that need real JWT tokens
 # ---------------------------------------------------------------------------
 
-def register_and_login(client: TestClient, email: str, password: str, role: str) -> dict:
-    """Register a user and return Authorization headers with a valid JWT."""
-    client.post("/api/auth/register", json={
-        "email": email, "name": f"Test {role.capitalize()}",
-        "password": password, "role": role,
-    })
-    res = client.post("/api/auth/login", json={"email": email, "password": password})
-    token = res.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
-
-
-def seed_user_headers(db, email: str, role: str, name: str = None) -> dict:
+def seed_user_headers(db, email: str, role: str, name: str = None,
+                      password: str = "Pass1234!", outlets: "list | None" = None) -> dict:
     """Insert a user row directly and return Authorization headers with a valid JWT.
 
-    Unlike register_and_login, this needs no pre-existing admin — it seeds the
-    user straight into the (rolled-back) test session, so it works on a fresh DB
-    even though POST /api/auth/register is admin-guarded.
+    POST /api/auth/register is admin-guarded (RBAC) and a fresh test DB has no
+    admin to authorize it, so tests seed users straight into the (rolled-back)
+    test session instead. Idempotent: re-seeding the same email reuses the row.
     """
     from app.models.user import User
     from app.services.auth_service import create_access_token, hash_password
 
-    user = User(
-        email=email,
-        name=name or f"Test {role.capitalize()}",
-        password_hash=hash_password("Pass1234!"),
-        role=role,
-    )
-    db.add(user)
-    db.flush()
-    token = create_access_token(str(user.id), user.email, role)
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        user = User(
+            email=email,
+            name=name or f"Test {role.capitalize()}",
+            password_hash=hash_password(password),
+            role=role,
+        )
+        db.add(user)
+        db.flush()
+
+    # Outlet scoping (Tier 4.2b). Admins bypass scoping, so their assignment is
+    # irrelevant. For non-admins the default is "assigned to every outlet the
+    # suite seeds", which keeps ordinary tests exercising their own data.
+    # Cross-outlet denial tests pass `outlets=[...]` explicitly to pin access.
+    if role != "admin":
+        from app.models.outlet import Outlet
+        if outlets is None:
+            names = [n for n, _ in TEST_OUTLETS]
+            user.outlets = db.query(Outlet).filter(Outlet.name.in_(names)).all()
+        else:
+            user.outlets = list(outlets)
+        db.flush()
+
+    token = create_access_token(str(user.id), user.email, user.role)
     return {"Authorization": f"Bearer {token}"}
 
-# Use TEST_DATABASE_URL if set, otherwise fall back to DATABASE_URL
-_DB_URL = os.getenv("TEST_DATABASE_URL") or os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg://postgres:password@localhost:5432/restaurantops_test",
-)
+
+def _session_from_client() -> "Session":
+    """Recover the DB session the TestClient is bound to (via the get_db override)."""
+    from app.database import get_db
+    from app.main import app
+
+    override = app.dependency_overrides.get(get_db)
+    if override is None:
+        raise RuntimeError(
+            "register_and_login requires the `client` fixture (it installs the get_db override)."
+        )
+    return next(override())
+
+
+def register_and_login(client: TestClient, email: str, password: str, role: str) -> dict:
+    """Create a user and return Authorization headers with a valid JWT.
+
+    Kept for the existing call sites. It seeds the user directly rather than
+    calling POST /api/auth/register, which is admin-only — on a fresh test DB
+    there is no admin to authorize that call. See seed_user_headers.
+    """
+    db = _session_from_client()
+    return seed_user_headers(db, email, role, password=password)
+
+# ---------------------------------------------------------------------------
+# Test database resolution
+#
+# SAFETY: create_tables() calls Base.metadata.drop_all() on teardown. If the
+# suite ever pointed at the application database it would destroy it. So the
+# test DB must be given explicitly via TEST_DATABASE_URL, and we hard-fail if
+# it resolves to the same URL as the app's DATABASE_URL.
+# ---------------------------------------------------------------------------
+
+load_dotenv()   # so TEST_DATABASE_URL / DATABASE_URL in .env are visible here
+
+# Uploads (Tier 5.1) must land in a throwaway dir, never the repo's ./var.
+# settings is already instantiated at this point, so mutate the singleton.
+import tempfile as _tempfile
+from app.config import settings as _settings
+_settings.STORAGE_DIR = _tempfile.mkdtemp(prefix="restaurantops-test-uploads-")
+
+_DEFAULT_TEST_URL = "postgresql+psycopg://postgres:@localhost:5432/restaurantops_test"
+_APP_URL  = os.getenv("DATABASE_URL")
+_TEST_URL = os.getenv("TEST_DATABASE_URL")
+
+_DB_URL = _TEST_URL or _DEFAULT_TEST_URL
+
+if _APP_URL and _DB_URL == _APP_URL:
+    raise RuntimeError(
+        "Refusing to run tests against the application database "
+        f"({_APP_URL!r}) — the suite drops all tables on teardown.\n"
+        "Set TEST_DATABASE_URL to a dedicated test database (see .env.example)."
+    )
 
 engine = create_engine(_DB_URL)
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -84,6 +139,29 @@ def db(create_tables):
         session.close()
         transaction.rollback()
         connection.close()
+
+
+# Outlet names used across the test suite. Since Tier 4.1 an outlet name must
+# exist in master data (an unknown name is a 422, so a typo can't silently
+# become a globally-visible record), so the suite seeds them up front.
+TEST_OUTLETS = [
+    ("Jakarta", "JKT"),
+    ("Bandung", "BDG"),
+    ("Dago", "DAGO"),
+    ("Outlet Kuala Lumpur", "OKL"),
+]
+
+
+@pytest.fixture(autouse=True)
+def seed_outlets(db):
+    """Ensure the outlets referenced by tests exist in master data."""
+    from app.models.outlet import Outlet
+
+    for name, code in TEST_OUTLETS:
+        if db.query(Outlet).filter(Outlet.name == name).first() is None:
+            db.add(Outlet(name=name, code=code, status="operational"))
+    db.flush()
+    return db
 
 
 @pytest.fixture()

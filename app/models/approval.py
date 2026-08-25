@@ -21,19 +21,29 @@ class ApprovalRequest(Base):
     __tablename__ = "approval_requests"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Polymorphic source: an approval is for an Issue OR a PurchaseRequest
+    # (Tier 6.1). Both nullable; a CHECK constraint enforces exactly one.
     issue_id = Column(
         UUID(as_uuid=True),
         ForeignKey("issues.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,  # enforces max one Approval per Issue (PRD §6)
+        nullable=True,
+        unique=True,  # still max one Approval per Issue (arch decision #1); NULLs allowed
     )
-    issue_number = Column(String(30), nullable=False)       # denormalized (FR-15)
+    issue_number = Column(String(30), nullable=True)        # denormalized (FR-15)
+    purchase_request_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("purchase_requests.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     number = Column(String(30), nullable=False, unique=True)  # APR-2026-00001
     title = Column(String(500), nullable=False)
     type = Column(_sa_enum(ApprovalTypeEnum, "approval_type"), nullable=False)
     description = Column(Text, default="")
     requester = Column(String(200), default="")
     outlet = Column(String(200), default="")
+    # Real FK alongside the denormalised name (migration 024). Nullable:
+    # NULL means "not tied to one outlet" (shared / All Outlets).
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     requested_date = Column(Date)
     amount = Column(Integer, nullable=True)                 # IDR integer, e.g. 1500000
     currency = Column(String(3), nullable=False, default="IDR", server_default="IDR")
@@ -52,6 +62,10 @@ class ApprovalRequest(Base):
     escalated = Column(Boolean, nullable=False, default=False, server_default="false")
 
     issue = relationship("Issue", back_populates="approval")
+    purchase_request = relationship(
+        "PurchaseRequest", back_populates="approval",
+        foreign_keys=[purchase_request_id],
+    )
     steps = relationship(
         "ApprovalStep",
         back_populates="approval_request",

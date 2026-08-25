@@ -71,6 +71,9 @@ class PMSchedule(Base):
     last_generated_at = Column(TIMESTAMP(timezone=True), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     outlet = Column(String(200), nullable=False)                   # denormalized
+    # Real FK alongside the denormalised name (migration 024). Nullable:
+    # NULL means "not tied to one outlet" (shared / All Outlets).
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     deleted_at = Column(TIMESTAMP(timezone=True), nullable=True)

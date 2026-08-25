@@ -25,6 +25,9 @@ class Asset(Base):
     name = Column(String(300), nullable=False)
     category = Column(String(100), nullable=False)                # free-text, e.g. "AC Unit"
     outlet = Column(String(200), nullable=False)                  # denormalized
+    # Real FK alongside the denormalised name (migration 024). Nullable:
+    # NULL means "not tied to one outlet" (shared / All Outlets).
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     status = Column(_sa_enum(AssetStatusEnum, "asset_status"), nullable=False, default=AssetStatusEnum.operational)
     serial_number = Column(String(100))
     brand = Column(String(100))
@@ -33,6 +36,8 @@ class Asset(Base):
     last_pm = Column(Date)
     next_pm = Column(Date)
     purchase_cost = Column(Integer, nullable=True)                # IDR integer — for repair-vs-replace (migration 017)
+    qr_token = Column(String(40), nullable=False, unique=True,    # opaque sticker token (migration 026)
+                      default=lambda: uuid.uuid4().hex)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -60,6 +65,9 @@ class WorkOrder(Base):
     asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True)
     asset_name = Column(String(300), nullable=False)              # denormalized for display
     outlet = Column(String(200), nullable=False)                  # denormalized
+    # Real FK alongside the denormalised name (migration 024). Nullable:
+    # NULL means "not tied to one outlet" (shared / All Outlets).
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     issue_id = Column(UUID(as_uuid=True), ForeignKey("issues.id", ondelete="SET NULL"), nullable=True)
     issue_number = Column(String(30))                             # denormalized, nullable
     title = Column(String(500), nullable=False)
@@ -145,10 +153,16 @@ class WorkOrderAttachment(Base):
 
     id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     work_order_id = Column(UUID(as_uuid=True), ForeignKey("work_orders.id", ondelete="CASCADE"), nullable=False)
-    file_url      = Column(Text, nullable=False)
+    file_url      = Column(Text, nullable=True)          # legacy external URL (null for uploaded files)
     caption       = Column(String(500), nullable=True)
     uploaded_by   = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at    = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    # Uploaded-file fields (migration 025). Null when the row is a legacy URL.
+    storage_key   = Column(String(300), nullable=True)
+    thumbnail_key = Column(String(300), nullable=True)
+    mime_type     = Column(String(100), nullable=True)
+    size_bytes    = Column(Integer, nullable=True)
 
     work_order = relationship("WorkOrder", back_populates="attachments")
 

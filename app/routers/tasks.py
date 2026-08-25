@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.services.outlet_scope_service import assert_can_access, scoped_query
 from app.models.task import Task
 from app.schemas.task import TaskResponse, UpdateTaskRequest
 from app.services.auth_service import UserResponse, get_current_user
@@ -31,10 +32,10 @@ def _task_to_response(task: Task) -> TaskResponse:
 def list_tasks(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """List all Tasks, optionally filtered by status (FR-9 note: no POST — Tasks come from Issues)."""
-    query = db.query(Task)
+    query = scoped_query(db, Task, current_user)
     if status:
         query = query.filter(Task.status == status)
     tasks = query.order_by(Task.created_at.desc()).all()
@@ -42,9 +43,9 @@ def list_tasks(
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)
-def update_task(task_id: str, req: UpdateTaskRequest, db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
+def update_task(task_id: str, req: UpdateTaskRequest, db: Session = Depends(get_db), current_user: UserResponse = Depends(get_current_user)):
     """Update Task status (FR-11). Intentionally does not cascade to parent Issue in MVP."""
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = scoped_query(db, Task, current_user).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 

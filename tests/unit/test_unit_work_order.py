@@ -93,9 +93,12 @@ class TestComputeTotalCost:
     def test_only_parts(self):
         assert compute_total_cost(labor_cost=0, parts_cost=200_000) == 200_000
 
-    def test_decimal_precision(self):
+    def test_money_is_integer_rupiah(self):
+        """Money is stored as INTEGER rupiah (migration 014) — fractional input is
+        truncated to whole rupiah, never rounded up into a float."""
         result = compute_total_cost(labor_cost=100_000.50, parts_cost=99_999.50)
-        assert result == pytest.approx(200_000.00)
+        assert result == 199_999
+        assert isinstance(result, int)
 
 
 # ---------------------------------------------------------------------------

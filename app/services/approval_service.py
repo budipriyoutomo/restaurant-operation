@@ -30,6 +30,7 @@ from app.schemas.approval import (
     ApprovalStepResponse,
     DecideApprovalRequest,
 )
+from app.services.outlet_scope_service import assert_can_access, scoped_query
 from app.services.notification_service import notify_approval_decided, notify_next_approver, notify_roles
 
 
@@ -164,8 +165,9 @@ def _approval_to_response(approval: ApprovalRequest) -> ApprovalResponse:
         amount=int(approval.amount) if approval.amount is not None else None,
         currency=approval.currency if hasattr(approval, "currency") else "IDR",
         status=approval.status.value if hasattr(approval.status, "value") else str(approval.status),
-        issueId=str(approval.issue_id),
+        issueId=str(approval.issue_id) if approval.issue_id else None,
         issueNumber=approval.issue_number,
+        purchaseRequestId=str(approval.purchase_request_id) if approval.purchase_request_id else None,
         currentStepOrder=approval.current_step_order,
         escalated=bool(getattr(approval, "escalated", False)),
         steps=[_step_to_response(s) for s in (approval.steps or [])],
@@ -202,32 +204,38 @@ def _next_apr_number(db: Session) -> str:
 def create_approval_with_steps(
     db: Session,
     *,
-    issue_id,
-    issue_number: str,
+    issue_id=None,
+    issue_number: Optional[str] = None,
+    purchase_request_id=None,             # Tier 6.1 — polymorphic source
     title: str,
     approval_type: str,
     description: str = "",
     requester: str = "",
     outlet: str = "",
+    outlet_id=None,                       # resolved FK (Tier 4.1); None = shared
     amount: Optional[int] = None,         # IDR integer
     flush_only: bool = False,
 ) -> ApprovalRequest:
-    """Create an ApprovalRequest with the default 2-step chain (manager → admin).
+    """Create an ApprovalRequest with a policy-resolved (or default 2-step) chain.
 
+    Attaches to an Issue OR a PurchaseRequest — exactly one must be given.
     If flush_only=True, only db.flush() is called (caller manages the commit).
-    This allows the entire issue → WO → approval creation to stay in one transaction.
     """
+    if (issue_id is None) == (purchase_request_id is None):
+        raise ValueError("Provide exactly one of issue_id / purchase_request_id")
     number = _next_apr_number(db)
 
     approval = ApprovalRequest(
         issue_id=issue_id,
         issue_number=issue_number,
+        purchase_request_id=purchase_request_id,
         number=number,
         title=title,
         type=approval_type,
         description=description,
         requester=requester,
         outlet=outlet,
+        outlet_id=outlet_id,
         requested_date=date.today(),
         amount=amount,
         status=ApprovalStatusEnum.pending.value,
@@ -239,7 +247,7 @@ def create_approval_with_steps(
     # Resolve the step chain from a matching policy (Tier 2.2); fall back to
     # the default 2-step chain (manager → admin) when no policy applies.
     from app.services.approval_policy_service import resolve_steps_for_request
-    policy_steps = resolve_steps_for_request(db, approval_type, amount, outlet or None)
+    policy_steps = resolve_steps_for_request(db, approval_type, amount, outlet_id)
     if policy_steps:
         step_defs = [{"order": s["order"], "role": s["role"]} for s in policy_steps]
     else:
@@ -434,6 +442,18 @@ def _sync_linked_work_order(db: Session, approval: ApprovalRequest, new_status: 
         pass   # WO may already be in a terminal state — don't crash the approval
 
 
+def _sync_linked_purchase_request(db: Session, approval: ApprovalRequest, new_status: str) -> None:
+    """When a procurement approval finalizes, move the PR forward/back (Tier 6.1).
+    approved → PR 'approved' (ready to become a PO); rejected → PR 'rejected'."""
+    if new_status not in ("approved", "rejected") or approval.purchase_request_id is None:
+        return
+    from app.models.procurement import PurchaseRequest
+
+    pr = db.query(PurchaseRequest).filter(PurchaseRequest.id == approval.purchase_request_id).first()
+    if pr and pr.status == "pending_approval":
+        pr.status = "approved" if new_status == "approved" else "rejected"
+
+
 # ---------------------------------------------------------------------------
 # DB: list / get
 # ---------------------------------------------------------------------------
@@ -442,8 +462,10 @@ def list_approvals(
     db: Session,
     type_filter: Optional[str] = None,
     status_filter: Optional[str] = None,
+    user=None,
 ) -> List[ApprovalResponse]:
-    query = db.query(ApprovalRequest)
+    # Outlet scoping (Tier 4.2b)
+    query = scoped_query(db, ApprovalRequest, user) if user is not None else db.query(ApprovalRequest)
     if type_filter:
         query = query.filter(ApprovalRequest.type == type_filter)
     if status_filter:
@@ -488,10 +510,12 @@ def decide_approval(
         comment=req.comment,
     )
 
-    # Downstream WO sync — lazy import to avoid circular dependency
+    # Downstream sync — a maintenance approval drives a WO, a procurement
+    # approval drives a PR. Exactly one of these applies.
     _sync_linked_work_order(db, approval, result.request_status)
+    _sync_linked_purchase_request(db, approval, result.request_status)
 
-    # FR-14: rejection → parent Issue waiting
+    # FR-14: rejection → parent Issue waiting (issue-linked approvals only)
     if result.request_status == "rejected" and approval.issue:
         approval.issue.status = IssueStatusEnum.waiting.value
 

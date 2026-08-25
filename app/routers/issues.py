@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.services.outlet_scope_service import assert_can_write_outlet, resolve_outlet_id
 from app.schemas.issue import CreateIssueRequest, IssueResponse, UpdateIssueRequest
 from app.services import issue_service
 from app.services.auth_service import UserResponse, get_current_user, require_roles
@@ -15,9 +16,11 @@ router = APIRouter(prefix="/api/issues", tags=["issues"])
 def create_issue(
     req: CreateIssueRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Create a new Issue and auto-generate Task/Approval based on toggles (FR-6)."""
+    # A non-admin may only file issues for outlets they are assigned to.
+    assert_can_write_outlet(db, resolve_outlet_id(db, req.outlet), current_user)
     return issue_service.create_issue(db, req)
 
 
@@ -27,17 +30,17 @@ def list_issues(
     category: Optional[str] = Query(None),
     outlet: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """List all Issues with optional filters."""
-    return issue_service.list_issues(db, status=status, category=category, outlet=outlet)
+    return issue_service.list_issues(db, status=status, category=category, outlet=outlet, user=current_user)
 
 
 @router.get("/{issue_id}", response_model=IssueResponse)
 def get_issue(
     issue_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Get a single Issue with its linked Task/Approval summaries (FR-7)."""
     result = issue_service.get_issue(db, issue_id)

@@ -6,7 +6,7 @@ on routes that want user context but don't require it.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -37,6 +37,10 @@ class UserResponse(BaseModel):
     name: str
     role: str
     is_active: bool
+    # Outlets this user is scoped to (Tier 4.1). Empty for admins — they see all
+    # outlets — and for users not yet assigned, which Tier 4.2 treats as
+    # deny-by-default for non-admins.
+    outlet_ids: List[str] = []
 
 
 class RegisterRequest(BaseModel):
@@ -55,6 +59,9 @@ class UpdateUserRequest(BaseModel):
     name: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    # Replaces the user's outlet assignment wholesale (Tier 4.1).
+    # None = leave unchanged; [] = explicitly clear all outlets.
+    outlet_ids: Optional[List[str]] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -81,7 +88,10 @@ def _decode_token(token: str) -> dict:
 
 
 def _user_to_response(u: User) -> UserResponse:
-    return UserResponse(id=str(u.id), email=u.email, name=u.name, role=u.role, is_active=u.is_active)
+    return UserResponse(
+        id=str(u.id), email=u.email, name=u.name, role=u.role, is_active=u.is_active,
+        outlet_ids=[str(o.id) for o in (u.outlets or [])],
+    )
 
 
 # ── FastAPI dependencies ──────────────────────────────────────────────────────
@@ -167,9 +177,33 @@ def update_user(db: Session, user_id: str, req: UpdateUserRequest, caller_id: st
         if not req.is_active and str(user.id) == caller_id:
             raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
         user.is_active = req.is_active
+    if req.outlet_ids is not None:
+        user.outlets = _resolve_outlets(db, req.outlet_ids)
     db.commit()
     db.refresh(user)
     return _user_to_response(user)
+
+
+def _resolve_outlets(db: Session, outlet_ids: List[str]) -> list:
+    """Resolve outlet ids to Outlet rows, rejecting unknown/deleted ones.
+
+    Assigning a user to an outlet that doesn't exist would silently grant them
+    nothing, so this fails loudly instead.
+    """
+    from app.models.outlet import Outlet
+
+    if not outlet_ids:
+        return []
+    outlets = (
+        db.query(Outlet)
+        .filter(Outlet.id.in_(outlet_ids), Outlet.deleted_at.is_(None))
+        .all()
+    )
+    found = {str(o.id) for o in outlets}
+    missing = [oid for oid in outlet_ids if oid not in found]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Unknown outlet id(s): {', '.join(missing)}")
+    return outlets
 
 
 def delete_user(db: Session, user_id: str, caller_id: str) -> None:

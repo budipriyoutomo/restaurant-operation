@@ -114,4 +114,26 @@ def consume_part(db: Session, wo: WorkOrder, part: Part, quantity: int) -> WorkO
     )
     db.commit()
     db.refresh(wp)
+
+    # Closing the loop (Tier 6.1): a consumption that drops stock to/below the
+    # reorder level raises an auto Purchase Request (idempotent — no duplicates).
+    # Lazy import avoids a parts ↔ procurement circular import.
+    from app.services import procurement_service
+    procurement_service.maybe_auto_reorder(db, part)
+
     return wp
+
+
+def restock(db: Session, part: Part, quantity: int) -> Part:
+    """Increment stock (the inverse of consumption). Used by goods receipt."""
+    if quantity <= 0:
+        raise ValueError("restock quantity must be > 0")
+    part.stock_qty = int(part.stock_qty or 0) + quantity
+    write_audit(
+        db,
+        table_name="parts",
+        record_id=str(part.id),
+        action="restock",
+        new_value={"part": part.name, "qty": quantity, "newStock": part.stock_qty},
+    )
+    return part

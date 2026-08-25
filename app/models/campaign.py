@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Text, Date, TIMESTAMP
+from sqlalchemy import ForeignKey, Column, String, Text, Date, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -14,6 +14,9 @@ class Campaign(Base):
     type        = Column(String(50), nullable=False, default="other")
     description = Column(Text, nullable=True)
     outlet      = Column(String(200), nullable=True)
+    # Real FK alongside the denormalised name (migration 024). Nullable:
+    # NULL means "not tied to one outlet" (shared / All Outlets).
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     budget      = Column(String(100), nullable=True)
     start_date  = Column(Date, nullable=True)
     end_date    = Column(Date, nullable=True)

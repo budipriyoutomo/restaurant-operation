@@ -6,9 +6,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.part import Part
-from app.schemas.part import CreatePartRequest, PartResponse, UpdatePartRequest
+from app.schemas.part import (
+    CreatePartRequest, PartPriceHistoryEntry, PartResponse, UpdatePartRequest,
+)
 from app.services import parts_service as parts_svc
+from app.services import procurement_service
 from app.services.audit_service import write_audit
+from app.services.outlet_scope_service import assert_can_access, resolve_outlet_id, scoped_query
 from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/parts", tags=["cmms"])
@@ -20,9 +24,9 @@ def list_parts(
     low_stock: bool = Query(False),
     active_only: bool = Query(True),
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    q = db.query(Part).filter(Part.deleted_at.is_(None))
+    q = scoped_query(db, Part, current_user).filter(Part.deleted_at.is_(None))
     if active_only:
         q = q.filter(Part.is_active.is_(True))
     if outlet:
@@ -38,14 +42,14 @@ def list_parts(
 def create_part(
     req: CreatePartRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     if db.query(Part).filter(Part.sku == req.sku, Part.deleted_at.is_(None)).first():
         raise HTTPException(status_code=409, detail=f"SKU '{req.sku}' already exists")
     part = Part(
         sku=req.sku, name=req.name, category=req.category, unit=req.unit,
         unit_cost=req.unitCost, stock_qty=req.stockQty, reorder_level=req.reorderLevel,
-        outlet=req.outlet, is_active=req.isActive,
+        outlet=req.outlet, outlet_id=resolve_outlet_id(db, req.outlet), is_active=req.isActive,
     )
     db.add(part)
     db.flush()
@@ -57,11 +61,26 @@ def create_part(
 
 
 @router.get("/{part_id}", response_model=PartResponse)
-def get_part(part_id: str, db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
+def get_part(part_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(get_current_user)):
     part = db.query(Part).filter(Part.id == part_id, Part.deleted_at.is_(None)).first()
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
+    assert_can_access(db, part, current_user)
     return parts_svc.part_to_response(part)
+
+
+@router.get("/{part_id}/price-history", response_model=List[PartPriceHistoryEntry])
+def get_part_price_history(
+    part_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Per-vendor price/order history for a part (Tier 6.2)."""
+    part = db.query(Part).filter(Part.id == part_id, Part.deleted_at.is_(None)).first()
+    if not part:
+        raise HTTPException(status_code=404, detail="Part not found")
+    assert_can_access(db, part, current_user)
+    return procurement_service.part_price_history(db, part_id)
 
 
 @router.patch("/{part_id}", response_model=PartResponse)
@@ -69,11 +88,12 @@ def update_part(
     part_id: str,
     req: UpdatePartRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     part = db.query(Part).filter(Part.id == part_id, Part.deleted_at.is_(None)).first()
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
+    assert_can_access(db, part, current_user)
     if req.name is not None:          part.name = req.name
     if req.category is not None:      part.category = req.category
     if req.unit is not None:          part.unit = req.unit
@@ -94,11 +114,12 @@ def update_part(
 def delete_part(
     part_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     part = db.query(Part).filter(Part.id == part_id, Part.deleted_at.is_(None)).first()
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
+    assert_can_access(db, part, current_user)
     part.deleted_at = datetime.now(timezone.utc)
     part.is_active = False
     write_audit(db, table_name="parts", record_id=str(part.id), action="delete",

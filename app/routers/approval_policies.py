@@ -15,6 +15,7 @@ from app.schemas.approval_policy import (
 )
 from app.services import approval_policy_service as policy_svc
 from app.services.audit_service import write_audit
+from app.services.outlet_scope_service import resolve_outlet_id
 from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/approval-policies", tags=["approvals"])
@@ -71,6 +72,7 @@ def create_policy(
         max_amount=req.maxAmount,
         steps=_steps_to_json(req.steps),
         outlet=req.outlet,
+        outlet_id=resolve_outlet_id(db, req.outlet),
         is_active=req.isActive,
     )
     db.add(policy)
@@ -133,6 +135,9 @@ def update_policy(
         policy.steps = _steps_to_json(req.steps)
     if req.outlet is not None:
         policy.outlet = req.outlet
+        # Matching is on outlet_id — keep it in step or the policy silently
+        # matches the wrong outlet after a change.
+        policy.outlet_id = resolve_outlet_id(db, req.outlet)
     if req.isActive is not None:
         policy.is_active = req.isActive
 

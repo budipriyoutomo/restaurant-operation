@@ -34,10 +34,20 @@ def notify_roles(
     ntype: str = "info",
     entity_type: Optional[str] = None,
     entity_id=None,
+    outlet_id=None,
 ) -> None:
-    """Fan-out a notification to all active users that have one of the given roles."""
+    """Fan-out a notification to all active users holding one of the given roles.
+
+    When `outlet_id` is given, non-admin recipients are limited to users assigned
+    to that outlet (Tier 4.2b) — otherwise every manager in the company would be
+    paged about a single branch's issue. Admins always receive it, and an
+    outlet_id of None (a shared/global record) fans out to everyone as before.
+    """
     users = db.query(User).filter(User.role.in_(roles), User.is_active == True).all()  # noqa: E712
     for u in users:
+        if outlet_id is not None and u.role != "admin":
+            if outlet_id not in {o.id for o in (u.outlets or [])}:
+                continue
         _create(db, u.id, title, message, ntype, entity_type, entity_id)
 
 
@@ -60,8 +70,8 @@ def notify_by_name(
 # Domain-specific helpers called from services
 # ---------------------------------------------------------------------------
 
-def notify_issue_created(db: Session, issue_number: str, title: str, outlet: str, issue_id) -> None:
-    # TODO: outlet-scoping — filter recipients to managers/admins assigned to `outlet` (Tier 2)
+def notify_issue_created(db: Session, issue_number: str, title: str, outlet: str, issue_id,
+                         outlet_id=None) -> None:
     notify_roles(
         db,
         roles=["manager", "admin"],
@@ -70,6 +80,7 @@ def notify_issue_created(db: Session, issue_number: str, title: str, outlet: str
         ntype="info",
         entity_type="issues",
         entity_id=issue_id,
+        outlet_id=outlet_id,
     )
 
 

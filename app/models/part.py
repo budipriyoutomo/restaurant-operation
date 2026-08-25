@@ -22,6 +22,9 @@ class Part(Base):
     stock_qty = Column(Integer, nullable=False, default=0)
     reorder_level = Column(Integer, nullable=False, default=0)
     outlet = Column(String(200), nullable=True)                # null = shared
+    # Real FK alongside the denormalised name (migration 024). Nullable:
+    # NULL means "not tied to one outlet" (shared / All Outlets).
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.training_program import TrainingProgram
-from app.services.auth_service import UserResponse, get_current_user
+from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/training-programs", tags=["training"])
 
@@ -90,7 +90,7 @@ def list_programs(
 def create_program(
     req: CreateTrainingProgramRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     from datetime import date
     p = TrainingProgram(
@@ -114,7 +114,7 @@ def update_program(
     program_id: str,
     req: UpdateTrainingProgramRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     from datetime import date
     p = db.query(TrainingProgram).filter(TrainingProgram.id == program_id).first()
@@ -137,7 +137,7 @@ def update_program(
 def delete_program(
     program_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     p = db.query(TrainingProgram).filter(TrainingProgram.id == program_id).first()
     if not p:

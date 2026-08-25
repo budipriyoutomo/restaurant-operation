@@ -7,6 +7,7 @@ can automatically produce a Task and/or an ApprovalRequest, fully linked.
 from datetime import date, datetime
 from typing import List, Optional
 
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,7 @@ from app.models.issue import Issue, IssueNumberSequence
 from app.models.task import Task, TaskNumberSequence
 from app.schemas.issue import CreateIssueRequest, IssueResponse, UpdateIssueRequest
 from app.services.audit_service import write_audit
+from app.services.outlet_scope_service import resolve_outlet_id, scoped_query
 from app.services.notification_service import notify_issue_created, notify_issue_status_changed
 from app.services.work_order_service import APPROVAL_THRESHOLD
 
@@ -137,10 +139,16 @@ def _create_corrective_wo(
     """
     from app.services.approval_service import create_approval_with_steps
 
-    # Resolve the asset (optional — issue can exist without an asset)
+    # Resolve the asset (optional — issue can exist without an asset, but a
+    # supplied assetId must exist: silently dropping it would create a WO that
+    # claims to be about an asset it is not linked to).
     asset = None
     if req.assetId:
         asset = db.query(Asset).filter(Asset.id == req.assetId).first()
+        if asset is None:
+            # Raised before any commit → the whole issue/WO/approval creation
+            # rolls back, leaving no orphan rows.
+            raise HTTPException(status_code=404, detail="Asset not found")
 
     asset_name = asset.name if asset else req.title
     wo_number  = _next_wo_number(db)
@@ -156,6 +164,7 @@ def _create_corrective_wo(
         asset_id=asset.id if asset else None,
         asset_name=asset_name,
         outlet=req.outlet,
+        outlet_id=resolve_outlet_id(db, req.outlet),
         issue_id=issue.id,
         issue_number=issue_number,
         title=f"[Korektif] {req.title}",
@@ -179,6 +188,7 @@ def _create_corrective_wo(
             description=req.description,
             requester=req.assignee or "Unassigned",
             outlet=req.outlet,
+            outlet_id=resolve_outlet_id(db, req.outlet),
             amount=int(req.estimatedCost) if req.estimatedCost is not None else None,
             flush_only=True,   # stay in caller's transaction
         )
@@ -204,6 +214,7 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
         title=req.title,
         description=req.description,
         outlet=req.outlet,
+        outlet_id=resolve_outlet_id(db, req.outlet),
         category=req.category,
         priority=req.priority,
         status=initial_status.value,
@@ -228,6 +239,7 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
             assignee=req.assignee or "Unassigned",
             due_date=_parse_date(req.dueDate),
             outlet=req.outlet,
+            outlet_id=resolve_outlet_id(db, req.outlet),
         )
         db.add(task)
 
@@ -244,6 +256,7 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
             description=req.description,
             requester=req.assignee or "Unassigned",
             outlet=req.outlet,
+            outlet_id=resolve_outlet_id(db, req.outlet),
             requested_date=date.today(),
             amount=req.approvalAmount,
             status="pending",
@@ -257,7 +270,7 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
     db.commit()
     db.refresh(issue)
 
-    notify_issue_created(db, issue_number, req.title, req.outlet, issue.id)
+    notify_issue_created(db, issue_number, req.title, req.outlet, issue.id, outlet_id=issue.outlet_id)
     db.commit()
 
     return _issue_to_response(issue)
@@ -268,8 +281,10 @@ def list_issues(
     status: Optional[str] = None,
     category: Optional[str] = None,
     outlet: Optional[str] = None,
+    user=None,
 ) -> List[IssueResponse]:
-    query = db.query(Issue)
+    # Outlet scoping (Tier 4.2b): callers pass the authenticated user.
+    query = scoped_query(db, Issue, user) if user is not None else db.query(Issue)
     if status:
         query = query.filter(Issue.status == status)
     if category:

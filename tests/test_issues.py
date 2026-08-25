@@ -2,6 +2,15 @@
 
 import pytest
 
+from tests.conftest import seed_user_headers
+
+
+@pytest.fixture(autouse=True)
+def _authenticated(client, db):
+    """All endpoints in this module require auth (RBAC). Give the shared client
+    default admin credentials so each request is authorized."""
+    client.headers.update(seed_user_headers(db, "admin_issues@test.test", "admin"))
+
 
 ISSUE_PAYLOAD = {
     "title": "AC unit broken at main hall",

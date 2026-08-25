@@ -7,7 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.campaign import Campaign
-from app.services.auth_service import UserResponse, get_current_user
+from app.services.auth_service import UserResponse, get_current_user, require_roles
+
+from app.services.outlet_scope_service import resolve_outlet_id
 
 router = APIRouter(prefix="/api/campaigns", tags=["marketing"])
 
@@ -91,7 +93,7 @@ def list_campaigns(
 def create_campaign(
     req: CreateCampaignRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     from datetime import date
     if req.type not in VALID_TYPES:
@@ -101,6 +103,7 @@ def create_campaign(
         type=req.type,
         description=req.description,
         outlet=req.outlet,
+        outlet_id=resolve_outlet_id(db, req.outlet),
         budget=req.budget,
         start_date=date.fromisoformat(req.start_date) if req.start_date else None,
         end_date=date.fromisoformat(req.end_date) if req.end_date else None,
@@ -117,7 +120,7 @@ def update_campaign(
     campaign_id: str,
     req: UpdateCampaignRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     from datetime import date
     c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
@@ -142,7 +145,7 @@ def update_campaign(
 def delete_campaign(
     campaign_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
     if not c:

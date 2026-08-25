@@ -16,6 +16,7 @@ from app.schemas.pm_schedule import (
 )
 from app.services import pm_schedule_service as pm_svc
 from app.services.audit_service import write_audit
+from app.services.outlet_scope_service import assert_can_access, resolve_outlet_id, scoped_query
 from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/pm-schedules", tags=["cmms"])
@@ -54,9 +55,9 @@ def list_pm_schedules(
     asset_id: Optional[str] = Query(None),
     active_only: bool = Query(False),
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    q = db.query(PMSchedule).filter(PMSchedule.deleted_at.is_(None))
+    q = scoped_query(db, PMSchedule, current_user).filter(PMSchedule.deleted_at.is_(None))
     if asset_id:
         q = q.filter(PMSchedule.asset_id == asset_id)
     if active_only:
@@ -69,7 +70,7 @@ def list_pm_schedules(
 def create_pm_schedule(
     req: CreatePMScheduleRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     _validate_interval(req.intervalType)
     if req.triggerType not in {"calendar", "meter"}:
@@ -100,6 +101,7 @@ def create_pm_schedule(
         next_due_date=next_due,
         is_active=req.isActive,
         outlet=asset.outlet,
+        outlet_id=resolve_outlet_id(db, asset.outlet),
     )
     db.add(sched)
     db.flush()
@@ -114,7 +116,7 @@ def create_pm_schedule(
 def get_pm_schedule(
     schedule_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     sched = (
         db.query(PMSchedule)
@@ -123,6 +125,7 @@ def get_pm_schedule(
     )
     if not sched:
         raise HTTPException(status_code=404, detail="PM schedule not found")
+    assert_can_access(db, sched, current_user)
     return pm_svc.pm_to_response(sched)
 
 
@@ -131,7 +134,7 @@ def update_pm_schedule(
     schedule_id: str,
     req: UpdatePMScheduleRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     sched = (
         db.query(PMSchedule)
@@ -140,6 +143,7 @@ def update_pm_schedule(
     )
     if not sched:
         raise HTTPException(status_code=404, detail="PM schedule not found")
+    assert_can_access(db, sched, current_user)
 
     if req.triggerType is not None:
         if req.triggerType not in {"calendar", "meter"}:
@@ -184,7 +188,7 @@ def update_pm_schedule(
 def delete_pm_schedule(
     schedule_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     sched = (
         db.query(PMSchedule)
@@ -193,6 +197,7 @@ def delete_pm_schedule(
     )
     if not sched:
         raise HTTPException(status_code=404, detail="PM schedule not found")
+    assert_can_access(db, sched, current_user)
     sched.deleted_at = datetime.now(timezone.utc)
     sched.is_active = False
     write_audit(db, table_name="pm_schedules", record_id=str(sched.id), action="delete",
@@ -203,7 +208,7 @@ def delete_pm_schedule(
 @router.post("/run-now", response_model=RunGeneratorResponse)
 def run_generator_now(
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("admin")),
+    current_user: UserResponse = Depends(require_roles("admin")),
 ):
     """Manually trigger the preventive-WO generator (demo/pilot). Idempotent."""
     evaluated = (

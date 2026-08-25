@@ -1,0 +1,19 @@
+[Unit]
+Description=RestaurantOps — run the PM generator daily
+Documentation=file:///opt/restaurantops/DOC.md
+
+[Timer]
+# Every day at 06:00 local time, before the maintenance shift starts.
+OnCalendar=*-*-* 06:00:00
+
+# Spread the load a little so every host doesn't fire on the exact same second.
+RandomizedDelaySec=300
+
+# If the machine was off at 06:00, run once as soon as it is back up.
+# Safe because the generator is idempotent.
+Persistent=true
+
+Unit=restaurantops-pm.service
+
+[Install]
+WantedBy=timers.target

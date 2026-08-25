@@ -1,0 +1,34 @@
+[Unit]
+Description=RestaurantOps — generate due preventive maintenance work orders
+Documentation=file:///opt/restaurantops/DOC.md
+# Don't start before the database is reachable.
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# Adjust these three to match the deployment.
+User=restaurantops
+Group=restaurantops
+WorkingDirectory=/opt/restaurantops/backend
+
+# Reads DATABASE_URL / SECRET_KEY from the app's .env (the script calls
+# load_dotenv() itself, but EnvironmentFile keeps systemd-level overrides working).
+EnvironmentFile=-/opt/restaurantops/backend/.env
+
+ExecStart=/opt/restaurantops/backend/venv/bin/python -m scripts.run_pm_generator
+
+# The generator is idempotent, so a retry can never double-create work orders.
+Restart=on-failure
+RestartSec=120
+
+# Hardening — the job only needs to read the code and talk to Postgres.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/restaurantops/backend
+
+[Install]
+WantedBy=multi-user.target

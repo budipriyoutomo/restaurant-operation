@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -159,17 +159,27 @@ def wo_to_detail_response(wo: WorkOrder) -> WorkOrderDetailResponse:
             )
             for item in (wo.checklist_items or [])
         ],
-        attachments=[
-            WorkOrderAttachmentResponse(
-                id=str(att.id),
-                workOrderId=str(att.work_order_id),
-                fileUrl=att.file_url,
-                caption=att.caption,
-                uploadedBy=str(att.uploaded_by),
-                createdAt=att.created_at.isoformat() if att.created_at else "",
-            )
-            for att in (wo.attachments or [])
-        ],
+        attachments=[attachment_to_response(att) for att in (wo.attachments or [])],
+    )
+
+
+def attachment_to_response(att) -> WorkOrderAttachmentResponse:
+    """ORM → response. Uploaded files are served via a route by id; legacy rows
+    keep their external URL."""
+    is_upload = att.storage_key is not None
+    return WorkOrderAttachmentResponse(
+        id=str(att.id),
+        workOrderId=str(att.work_order_id),
+        fileUrl=(f"/api/work-orders/{att.work_order_id}/attachments/{att.id}/file"
+                 if is_upload else att.file_url),
+        thumbnailUrl=(f"/api/work-orders/{att.work_order_id}/attachments/{att.id}/thumbnail"
+                      if att.thumbnail_key else None),
+        caption=att.caption,
+        uploadedBy=str(att.uploaded_by),
+        mimeType=att.mime_type,
+        sizeBytes=att.size_bytes,
+        isUpload=is_upload,
+        createdAt=att.created_at.isoformat() if att.created_at else "",
     )
 
 
@@ -209,7 +219,10 @@ def transition_work_order(
         wo.labor_cost  = wo.labor_cost  or 0
         wo.parts_cost  = wo.parts_cost  or 0
         if wo.completed_date is None:
-            wo.completed_date = now.date()
+            # Local calendar date, to match how sla_due / scheduled_date are
+            # entered. now.date() (UTC) disagrees near the midnight boundary and
+            # would flip the SLA verdict by up to a day.
+            wo.completed_date = date.today()
         # SLA verdict for vendor work (Tier 3): met if completed on/before due
         if wo.sla_due is not None:
             wo.sla_met = wo.completed_date <= wo.sla_due

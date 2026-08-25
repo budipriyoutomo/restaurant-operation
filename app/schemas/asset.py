@@ -22,6 +22,7 @@ class AssetResponse(BaseModel):
     lastPM: Optional[str] = None
     nextPM: Optional[str] = None
     purchaseCost: Optional[int] = None    # IDR integer
+    qrToken: Optional[str] = None         # opaque sticker token (Tier 5.2)
     createdAt: str
 
 
@@ -59,6 +60,13 @@ class AssetHistoryResponse(BaseModel):
     total: int
     page: int
     pageSize: int
+
+
+class QRResolveResponse(BaseModel):
+    """GET /api/assets/by-qr/{token} — where a scanned sticker lands."""
+    asset: AssetResponse
+    activeWorkOrderId: Optional[str] = None   # the open WO to jump straight into, if any
+    openWorkOrderCount: int = 0
 
 
 class AssetSummaryResponse(BaseModel):
@@ -101,9 +109,13 @@ class WorkOrderAttachmentResponse(BaseModel):
     """Shape matches the frontend WorkOrderAttachment interface in lib/types.ts."""
     id: str
     workOrderId: str
-    fileUrl: str
+    fileUrl: Optional[str] = None      # legacy external URL, or serve-route for uploads
+    thumbnailUrl: Optional[str] = None # small preview for uploads
     caption: Optional[str] = None
     uploadedBy: str     # user UUID
+    mimeType: Optional[str] = None
+    sizeBytes: Optional[int] = None
+    isUpload: bool = False             # True = stored by us; False = external URL
     createdAt: str
 
 

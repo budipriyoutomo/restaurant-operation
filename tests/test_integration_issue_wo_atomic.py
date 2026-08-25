@@ -113,7 +113,7 @@ class TestAtomicCreation:
         """Non-Maintenance category does not create a WO even with generateWorkOrder=True."""
         res = client.post("/api/issues", json={
             "title": "AC bising",
-            "category": "Complaint",
+            "category": "Guest Service",
             "priority": "low",
             "reportedBy": "Tamu",
             "outlet": "Jakarta",
@@ -217,4 +217,5 @@ class TestEstimatedCost:
         wo_id = res.json()["workOrderId"]
         wo = client.get(f"/api/work-orders/{wo_id}", headers=mgr).json()
         approval = client.get(f"/api/approvals/{wo['approvalId']}", headers=mgr).json()
-        assert approval["amount"] == str(ABOVE_THRESHOLD)
+        # Money is INTEGER rupiah since migration 014 — not a formatted string.
+        assert approval["amount"] == ABOVE_THRESHOLD

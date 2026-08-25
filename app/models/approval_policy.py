@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, Integer, String, TIMESTAMP, Enum as SAEnum
+from sqlalchemy import ForeignKey, Boolean, Column, Integer, String, TIMESTAMP, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
@@ -28,6 +28,9 @@ class ApprovalPolicy(Base):
     max_amount = Column(Integer, nullable=True)     # inclusive upper bound (IDR)
     steps = Column(JSONB, nullable=False, default=list)
     outlet = Column(String(200), nullable=True)     # null = all outlets
+    # Real FK alongside the denormalised name (migration 024). Nullable:
+    # NULL means "not tied to one outlet" (shared / All Outlets).
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

@@ -56,3 +56,15 @@ class WorkOrderPartResponse(BaseModel):
 class ConsumePartRequest(BaseModel):
     partId: str
     quantity: int = Field(gt=0)
+
+
+class PartPriceHistoryEntry(BaseModel):
+    """One vendor's purchasing history for a part (Tier 6.2)."""
+    vendorId: Optional[str] = None
+    vendorName: Optional[str] = None
+    lastUnitCost: int
+    avgUnitCost: int
+    minUnitCost: int
+    timesOrdered: int
+    totalQuantity: int
+    lastOrderedAt: Optional[str] = None

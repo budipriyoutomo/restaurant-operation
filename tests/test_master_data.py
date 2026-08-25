@@ -2,6 +2,16 @@
 
 import pytest
 
+from tests.conftest import seed_user_headers
+
+
+@pytest.fixture(autouse=True)
+def _authenticated(client, db):
+    """Master-data CRUD is admin-only (RBAC). Give the shared client default
+    admin credentials so each request is authorized."""
+    client.headers.update(seed_user_headers(db, "admin_md@test.test", "admin"))
+
+
 _OUTLET = {"name": "Test Outlet KL", "code": "TESTKL", "status": "operational"}
 _CATEGORY = {"name": "Test Category", "description": "For testing", "type": "operations"}
 _PIC = {"name": "Ahmad Test", "email": "ahmad.test@restaurantops.test",

@@ -29,8 +29,9 @@ class ApprovalResponse(BaseModel):
     amount: Optional[int] = None          # IDR integer; format "Rp X" only in frontend
     currency: str = "IDR"
     status: str
-    issueId: str
-    issueNumber: str
+    issueId: Optional[str] = None        # null for procurement approvals (Tier 6.1)
+    issueNumber: Optional[str] = None
+    purchaseRequestId: Optional[str] = None
     currentStepOrder: int = 1
     escalated: bool = False
     steps: List[ApprovalStepResponse] = []

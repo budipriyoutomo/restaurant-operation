@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP
+from sqlalchemy import ForeignKey, Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -27,6 +27,9 @@ class Issue(Base):
     title = Column(String(500), nullable=False)
     description = Column(Text, default="")
     outlet = Column(String(200), nullable=False)
+    # Real FK alongside the denormalised name (migration 024). Nullable:
+    # NULL means "not tied to one outlet" (shared / All Outlets).
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     category = Column(_sa_enum(IssueCategoryEnum, "issue_category"), nullable=False)
     priority = Column(_sa_enum(PriorityEnum, "priority"), nullable=False, default=PriorityEnum.medium)
     status = Column(_sa_enum(IssueStatusEnum, "issue_status"), nullable=False, default=IssueStatusEnum.open)
@@ -46,6 +49,14 @@ class Issue(Base):
         back_populates="issue",
         cascade="all, delete-orphan",
         uselist=False,
+        lazy="selectin",
+    )
+    # Read-only link to auto-generated work orders (WorkOrder.issue_id → SET NULL on delete,
+    # so no cascade here). Enables IssueResponse.workOrderId to be populated.
+    work_orders = relationship(
+        "WorkOrder",
+        foreign_keys="WorkOrder.issue_id",
+        viewonly=True,
         lazy="selectin",
     )
 

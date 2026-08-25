@@ -1,12 +1,15 @@
+import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.asset import Asset, WorkOrder, WorkOrderChecklistItem, WorkOrderNumberSequence
+from app.models.asset import Asset, WorkOrder, WorkOrderAttachment, WorkOrderChecklistItem, WorkOrderNumberSequence
+from app.services import idempotency_service, storage_service
 from app.models.enums import WorkOrderStatusEnum
 from app.schemas.asset import (
     ChecklistItemCreate,
@@ -29,6 +32,7 @@ from app.services import parts_service as parts_svc
 from app.services import vendor_maintenance_service as vendor_svc
 from app.services import work_order_service as svc
 from app.services.audit_service import write_audit
+from app.services.outlet_scope_service import assert_can_access, assert_can_write_outlet, resolve_outlet_id, scoped_query
 from app.services.auth_service import UserResponse, get_current_user, require_roles
 from app.services.work_order_service import InvalidTransitionError
 
@@ -65,10 +69,15 @@ def _parse_date(date_str: Optional[str]):
         return None
 
 
-def _get_wo_or_404(db: Session, wo_id: str) -> WorkOrder:
+def _get_wo_or_404(db: Session, wo_id: str, user=None) -> WorkOrder:
+    """Fetch a work order, 404-ing both when it is missing and when it belongs to
+    an outlet the caller cannot see (same status code on purpose — a 403 would
+    confirm the record exists)."""
     wo = db.query(WorkOrder).filter(WorkOrder.id == wo_id).first()
     if not wo:
         raise HTTPException(status_code=404, detail="Work order not found")
+    if user is not None:
+        assert_can_access(db, wo, user)
     return wo
 
 
@@ -83,9 +92,9 @@ def list_work_orders(
     status: Optional[str] = Query(None),
     outlet: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    query = db.query(WorkOrder)
+    query = scoped_query(db, WorkOrder, current_user)
     if asset_id:
         query = query.filter(WorkOrder.asset_id == asset_id)
     if issue_id:
@@ -107,6 +116,8 @@ def create_work_order(
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
+    wo_outlet_id = resolve_outlet_id(db, asset.outlet)
+    assert_can_write_outlet(db, wo_outlet_id, current_user)
     number = _next_wo_number(db)
     wo = WorkOrder(
         number=number,
@@ -114,6 +125,7 @@ def create_work_order(
         asset_id=asset.id,
         asset_name=asset.name,
         outlet=asset.outlet,
+        outlet_id=wo_outlet_id,
         issue_id=req.issueId or None,
         issue_number=req.issueNumber,
         title=req.title,
@@ -136,10 +148,10 @@ def create_work_order(
 def get_work_order(
     wo_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Return full work order detail including checklist and attachments."""
-    wo = _get_wo_or_404(db, wo_id)
+    wo = _get_wo_or_404(db, wo_id, current_user)
     return svc.wo_to_detail_response(wo)
 
 
@@ -148,9 +160,9 @@ def update_work_order(
     wo_id: str,
     req: UpdateWorkOrderRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
 ):
-    wo = _get_wo_or_404(db, wo_id)
+    wo = _get_wo_or_404(db, wo_id, current_user)
     old_status = wo.status.value if hasattr(wo.status, "value") else str(wo.status)
 
     if req.status is not None:
@@ -177,9 +189,9 @@ def update_work_order(
 def delete_work_order(
     wo_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
 ):
-    wo = _get_wo_or_404(db, wo_id)
+    wo = _get_wo_or_404(db, wo_id, current_user)
     write_audit(db, table_name="work_orders", record_id=str(wo.id), action="delete",
                 old_value={"number": wo.number, "asset": wo.asset_name})
     db.delete(wo)
@@ -205,7 +217,7 @@ def transition_work_order(
       in-progress → completed   | on-hold   | cancelled
     Any other transition returns 409.
     """
-    wo = _get_wo_or_404(db, wo_id)
+    wo = _get_wo_or_404(db, wo_id, current_user)
     try:
         target = WorkOrderStatusEnum(req.targetStatus)
     except ValueError:
@@ -229,12 +241,17 @@ def transition_work_order(
 def add_checklist_item(
     wo_id: str,
     req: ChecklistItemCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    idempotency_key: Optional[str] = Header(None),
 ):
-    wo = _get_wo_or_404(db, wo_id)
+    cached = idempotency_service.get_cached(db, idempotency_key, current_user.id, request)
+    if cached is not None:
+        return cached
+    wo = _get_wo_or_404(db, wo_id, current_user)
     item = svc.add_checklist_item(db, wo, req)
-    return ChecklistItemResponse(
+    resp = ChecklistItemResponse(
         id=str(item.id),
         workOrderId=str(item.work_order_id),
         title=item.title,
@@ -243,6 +260,8 @@ def add_checklist_item(
         doneAt=item.done_at.isoformat() if item.done_at else None,
         orderIndex=item.order_index,
     )
+    idempotency_service.store(db, idempotency_key, current_user.id, request, 201, resp)
+    return resp
 
 
 @router.patch("/{wo_id}/checklist/{item_id}", response_model=ChecklistItemResponse)
@@ -254,7 +273,7 @@ def toggle_checklist_item(
     current_user: UserResponse = Depends(get_current_user),
 ):
     """Toggle a checklist item done/undone. Any authenticated user can check off items."""
-    _get_wo_or_404(db, wo_id)   # validates WO exists
+    _get_wo_or_404(db, wo_id, current_user)   # validates WO exists
     item = db.query(WorkOrderChecklistItem).filter(
         WorkOrderChecklistItem.id == item_id,
         WorkOrderChecklistItem.work_order_id == wo_id,
@@ -283,9 +302,9 @@ def update_cost(
     wo_id: str,
     req: WorkOrderCostUpdate,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
 ):
-    wo = _get_wo_or_404(db, wo_id)
+    wo = _get_wo_or_404(db, wo_id, current_user)
     wo = svc.update_wo_cost(db, wo, req)
     return svc.wo_to_detail_response(wo)
 
@@ -301,19 +320,96 @@ def add_attachment(
     db: Session = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Upload an attachment URL to a work order.
-
-    Physical file upload is out of scope for the pilot — supply an external URL.
-    """
-    wo = _get_wo_or_404(db, wo_id)
+    """Attach an external URL to a work order (kept for documents / links).
+    For technician photos use POST /{wo_id}/attachments/upload."""
+    wo = _get_wo_or_404(db, wo_id, current_user)
     att = svc.add_attachment(db, wo, req, uploader_user_id=current_user.id)
-    return WorkOrderAttachmentResponse(
-        id=str(att.id),
-        workOrderId=str(att.work_order_id),
-        fileUrl=att.file_url,
-        caption=att.caption,
-        uploadedBy=str(att.uploaded_by),
-        createdAt=att.created_at.isoformat() if att.created_at else "",
+    return svc.attachment_to_response(att)
+
+
+@router.post("/{wo_id}/attachments/upload", response_model=WorkOrderAttachmentResponse, status_code=201)
+def upload_attachment(
+    wo_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    caption: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None),
+):
+    """Upload a real photo taken in the field (Tier 5.1).
+
+    The image is validated, EXIF-stripped (removes embedded GPS = employee
+    location), thumbnailed, and stored by the app. Served back via the file
+    route, not a caller-supplied URL.
+    """
+    # A retried offline upload must not create a duplicate attachment.
+    cached = idempotency_service.get_cached(db, idempotency_key, current_user.id, request)
+    if cached is not None:
+        return cached
+    wo = _get_wo_or_404(db, wo_id, current_user)
+    raw = file.file.read()
+    stored = storage_service.save_image(raw, file.content_type or "")
+    att = WorkOrderAttachment(
+        work_order_id=wo.id,
+        uploaded_by=uuid.UUID(current_user.id) if isinstance(current_user.id, str) else current_user.id,
+        caption=caption,
+        storage_key=stored.storage_key,
+        thumbnail_key=stored.thumbnail_key,
+        mime_type=stored.mime_type,
+        size_bytes=stored.size_bytes,
+    )
+    db.add(att)
+    write_audit(db, table_name="work_order_attachments", record_id=str(wo.id), action="upload",
+                new_value={"workOrder": wo.number, "mime": stored.mime_type, "bytes": stored.size_bytes})
+    db.commit()
+    db.refresh(att)
+    resp = svc.attachment_to_response(att)
+    idempotency_service.store(db, idempotency_key, current_user.id, request, 201, resp)
+    return resp
+
+
+def _get_attachment_or_404(db: Session, wo_id: str, att_id: str, user) -> WorkOrderAttachment:
+    _get_wo_or_404(db, wo_id, user)   # enforces outlet scoping on the parent WO
+    att = db.query(WorkOrderAttachment).filter(
+        WorkOrderAttachment.id == att_id,
+        WorkOrderAttachment.work_order_id == wo_id,
+    ).first()
+    if not att:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return att
+
+
+@router.get("/{wo_id}/attachments/{att_id}/file")
+def serve_attachment(
+    wo_id: str,
+    att_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    att = _get_attachment_or_404(db, wo_id, att_id, current_user)
+    if not att.storage_key:
+        raise HTTPException(status_code=404, detail="No stored file for this attachment")
+    return StreamingResponse(
+        storage_service.open_stream(att.storage_key),
+        media_type=att.mime_type or "application/octet-stream",
+    )
+
+
+@router.get("/{wo_id}/attachments/{att_id}/thumbnail")
+def serve_thumbnail(
+    wo_id: str,
+    att_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    att = _get_attachment_or_404(db, wo_id, att_id, current_user)
+    key = att.thumbnail_key or att.storage_key
+    if not key:
+        raise HTTPException(status_code=404, detail="No thumbnail for this attachment")
+    return StreamingResponse(
+        storage_service.open_stream(key),
+        media_type=att.mime_type or "application/octet-stream",
     )
 
 
@@ -327,9 +423,9 @@ def add_attachment(
 def list_wo_parts(
     wo_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    wo = _get_wo_or_404(db, wo_id)
+    wo = _get_wo_or_404(db, wo_id, current_user)
     return [parts_svc.wo_part_to_response(wp) for wp in (wo.parts_used or [])]
 
 
@@ -337,10 +433,17 @@ def list_wo_parts(
 def consume_wo_part(
     wo_id: str,
     req: ConsumePartRequest,
+    request: Request,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    idempotency_key: Optional[str] = Header(None),
 ):
-    wo = _get_wo_or_404(db, wo_id)
+    # Consuming a part decrements stock — a retried offline request must not
+    # double-decrement. If this key already ran, return that result unchanged.
+    cached = idempotency_service.get_cached(db, idempotency_key, current_user.id, request)
+    if cached is not None:
+        return cached
+    wo = _get_wo_or_404(db, wo_id, current_user)
     part = db.query(Part).filter(Part.id == req.partId, Part.deleted_at.is_(None)).first()
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
@@ -350,7 +453,9 @@ def consume_wo_part(
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    return parts_svc.wo_part_to_response(wp)
+    resp = parts_svc.wo_part_to_response(wp)
+    idempotency_service.store(db, idempotency_key, current_user.id, request, 201, resp)
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -363,10 +468,10 @@ def assign_vendor(
     wo_id: str,
     req: AssignVendorRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     from datetime import date as _date
-    wo = _get_wo_or_404(db, wo_id)
+    wo = _get_wo_or_404(db, wo_id, current_user)
     vendor = db.query(Vendor).filter(Vendor.id == req.vendorId).first()
     if not vendor:
         raise HTTPException(status_code=404, detail="Vendor not found")

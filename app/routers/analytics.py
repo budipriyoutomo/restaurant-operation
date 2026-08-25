@@ -121,6 +121,18 @@ def get_summary(db: Session = Depends(get_db), _: UserResponse = Depends(get_cur
     }
 
 
+@router.get("/budget")
+def get_budget_status(
+    period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+):
+    """Budget vs actual spend (WO + PO) per outlet for a month (Tier 6.3),
+    outlet-scoped for non-admins."""
+    from app.services import budget_service
+    return budget_service.compute_budget_status(db, period, user=current_user)
+
+
 @router.get("/cmms", response_model=CMMSAnalyticsResponse)
 def get_cmms_analytics(
     outlet: Optional[str] = Query(None),

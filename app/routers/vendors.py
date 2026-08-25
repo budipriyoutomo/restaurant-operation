@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.vendor import Vendor
 from app.services import vendor_maintenance_service as vendor_svc
-from app.services.auth_service import UserResponse, get_current_user
+from app.services.auth_service import UserResponse, get_current_user, require_roles
 
 router = APIRouter(prefix="/api/vendors", tags=["procurement"])
 
@@ -93,7 +93,7 @@ def list_vendors(
 def create_vendor(
     req: CreateVendorRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     vendor = Vendor(**req.model_dump())
     db.add(vendor)
@@ -110,6 +110,27 @@ class VendorPerformanceResponse(BaseModel):
     onTimePct: float
     avgResolutionDays: float
     openWorkOrders: int
+
+
+class VendorPerformanceSummary(VendorPerformanceResponse):
+    name: str
+
+
+@router.get("/performance-summary", response_model=List[VendorPerformanceSummary])
+def get_performance_summary(
+    db: Session = Depends(get_db),
+    _: UserResponse = Depends(get_current_user),
+):
+    """Performance for every active vendor in one call (Tier 6.2) — so the PO
+    buyer can compare on-time% without N round-trips. Best on-time first."""
+    vendors = db.query(Vendor).filter(Vendor.is_active == True).all()  # noqa: E712
+    out = []
+    for v in vendors:
+        perf = vendor_svc.vendor_performance(db, str(v.id))
+        perf["name"] = v.name
+        out.append(perf)
+    out.sort(key=lambda p: (-p["onTimePct"], p["avgResolutionDays"]))
+    return out
 
 
 @router.get("/{vendor_id}", response_model=VendorResponse)
@@ -142,7 +163,7 @@ def update_vendor(
     vendor_id: str,
     req: UpdateVendorRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     v = db.query(Vendor).filter(Vendor.id == vendor_id).first()
     if not v:
@@ -159,7 +180,7 @@ def update_vendor(
 def delete_vendor(
     vendor_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_roles("manager", "admin")),
 ):
     v = db.query(Vendor).filter(Vendor.id == vendor_id).first()
     if not v:
