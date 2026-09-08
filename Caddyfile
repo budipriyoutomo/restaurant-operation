@@ -1,0 +1,21 @@
+# Optional TLS reverse proxy for the API.
+# Enable with:  docker compose --env-file .env.production --profile proxy up -d
+# Requires DOMAIN (and ideally ACME_EMAIL) set in .env.production, and the
+# domain's DNS A/AAAA record pointing at this VPS.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode gzip zstd
+
+	# The frontend on Vercel/Netlify calls this origin directly; CORS is handled
+	# by FastAPI (CORS_ORIGINS), so Caddy just needs to forward everything.
+	reverse_proxy api:8000
+
+	# Uploaded work-order photos can be up to MAX_UPLOAD_MB (default 10).
+	request_body {
+		max_size 15MB
+	}
+}

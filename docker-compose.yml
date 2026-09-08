@@ -1,0 +1,102 @@
+# RestaurantOps backend — production stack for a single VPS.
+#
+#   docker compose --env-file .env.production up -d --build
+#
+# Services:
+#   db            PostgreSQL 17, data on a named volume
+#   api           FastAPI (Gunicorn/Uvicorn), migrations run on start
+#   pm-generator  hourly idempotent preventive-maintenance work-order job
+#   caddy         optional TLS reverse proxy  (profile: "proxy")
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-restaurantops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:-restaurantops}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-restaurantops} -d ${POSTGRES_DB:-restaurantops}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Not published to the host — only reachable from other compose services.
+    expose:
+      - "5432"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: restaurantops-api:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    environment:
+      # Override the .env host so the app talks to the compose service, not localhost.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-restaurantops}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-restaurantops}
+      STORAGE_DIR: /data/uploads
+      RUN_SEED: ${RUN_SEED:-0}
+      # UvicornWorker reads this to trust proxy headers (real client IP for rate limiting).
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+    volumes:
+      - uploads:/data/uploads
+    # Publish only on localhost; put Caddy/Nginx in front for TLS.
+    # Use "8000:8000" instead if you terminate TLS elsewhere.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  pm-generator:
+    image: restaurantops-api:latest
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+      db:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-restaurantops}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-restaurantops}
+      STORAGE_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    # Skip entrypoint migrations/seed; the api service owns schema. Just loop the job.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          echo "[pm-generator] $(date -Iseconds) running";
+          python -m scripts.run_pm_generator || echo "[pm-generator] run failed";
+          sleep 3600;
+        done
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles: ["proxy"]
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Set DOMAIN and ACME_EMAIL in .env.production before using this profile.
+      DOMAIN: ${DOMAIN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  uploads:
+  caddy_data:
+  caddy_config:

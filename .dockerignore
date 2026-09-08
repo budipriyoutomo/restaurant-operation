@@ -1,0 +1,29 @@
+# Keep the build context small and secrets out of the image.
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.git/
+.gitignore
+
+# Local Next.js build output that leaked into this folder — never needed in the API image
+.next/
+
+# Secrets & local state
+.env
+.env.*
+!.env.example
+!.env.production.example
+var/
+data/
+
+# Tests are not run inside the runtime image
+tests/
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
