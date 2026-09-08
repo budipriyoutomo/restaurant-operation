@@ -67,6 +67,9 @@ services:
       STORAGE_DIR: /data/uploads
     volumes:
       - uploads:/data/uploads
+    # No HTTP server here, so the image's curl-based healthcheck can't pass.
+    healthcheck:
+      disable: true
     # Skip entrypoint migrations/seed; the api service owns schema. Just loop the job.
     entrypoint: ["/bin/sh", "-c"]
     command:

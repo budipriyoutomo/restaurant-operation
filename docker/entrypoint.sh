@@ -4,15 +4,18 @@ set -e
 
 echo "[entrypoint] waiting for database..."
 python <<'PY'
-import os, time, sys
-import psycopg
+import time, sys
+# Reuse the app's engine so DATABASE_URL parsing (incl. odd password chars) is
+# handled exactly like the running app does it.
+from sqlalchemy import text
+from app.database import engine
 
-url = os.environ["DATABASE_URL"].replace("+psycopg", "")
 for attempt in range(1, 61):
     try:
-        with psycopg.connect(url, connect_timeout=3):
-            print("[entrypoint] database is up")
-            break
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        print("[entrypoint] database is up")
+        break
     except Exception as exc:
         print(f"[entrypoint] db not ready ({attempt}/60): {exc}")
         time.sleep(2)
