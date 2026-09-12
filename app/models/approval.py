@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Boolean, Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP, ForeignKey
+from sqlalchemy import BigInteger, Boolean, Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -45,7 +45,7 @@ class ApprovalRequest(Base):
     # NULL means "not tied to one outlet" (shared / All Outlets).
     outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
     requested_date = Column(Date)
-    amount = Column(Integer, nullable=True)                 # IDR integer, e.g. 1500000
+    amount = Column(BigInteger, nullable=True)                 # IDR integer, e.g. 1500000
     currency = Column(String(3), nullable=False, default="IDR", server_default="IDR")
     status = Column(_sa_enum(ApprovalStatusEnum, "approval_status"), nullable=False, default=ApprovalStatusEnum.pending)
     decided_at = Column(TIMESTAMP(timezone=True))

@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, Integer, String, TIMESTAMP, ForeignKey
+from sqlalchemy import BigInteger, Boolean, Column, Integer, String, TIMESTAMP, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -18,7 +18,7 @@ class Part(Base):
     name = Column(String(300), nullable=False)
     category = Column(String(100), nullable=False, default="General")
     unit = Column(String(20), nullable=False, default="pcs")
-    unit_cost = Column(Integer, nullable=False, default=0)      # IDR
+    unit_cost = Column(BigInteger, nullable=False, default=0)      # IDR
     stock_qty = Column(Integer, nullable=False, default=0)
     reorder_level = Column(Integer, nullable=False, default=0)
     outlet = Column(String(200), nullable=True)                # null = shared
@@ -41,8 +41,8 @@ class WorkOrderPart(Base):
     part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="SET NULL"), nullable=True)
     part_name = Column(String(300), nullable=False)            # denormalized snapshot
     quantity = Column(Integer, nullable=False)
-    unit_cost = Column(Integer, nullable=False, default=0)     # IDR snapshot
-    line_cost = Column(Integer, nullable=False, default=0)     # quantity * unit_cost
+    unit_cost = Column(BigInteger, nullable=False, default=0)     # IDR snapshot
+    line_cost = Column(BigInteger, nullable=False, default=0)     # quantity * unit_cost
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
     work_order = relationship("WorkOrder", back_populates="parts_used")

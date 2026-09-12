@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, Boolean, Column, Integer, String, TIMESTAMP, Enum as SAEnum
+from sqlalchemy import BigInteger, ForeignKey, Boolean, Column, Integer, String, TIMESTAMP, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
@@ -24,8 +24,8 @@ class ApprovalPolicy(Base):
                name="approval_type", create_type=False),
         nullable=False,
     )
-    min_amount = Column(Integer, nullable=True)     # inclusive lower bound (IDR)
-    max_amount = Column(Integer, nullable=True)     # inclusive upper bound (IDR)
+    min_amount = Column(BigInteger, nullable=True)     # inclusive lower bound (IDR)
+    max_amount = Column(BigInteger, nullable=True)     # inclusive upper bound (IDR)
     steps = Column(JSONB, nullable=False, default=list)
     outlet = Column(String(200), nullable=True)     # null = all outlets
     # Real FK alongside the denormalised name (migration 024). Nullable:

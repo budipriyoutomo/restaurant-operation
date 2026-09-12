@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, ForeignKey, Integer, String, TIMESTAMP, UniqueConstraint
+from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, TIMESTAMP, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -18,6 +18,6 @@ class Budget(Base):
     outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="CASCADE"), nullable=False)
     outlet = Column(String(200), nullable=True)     # denormalized name
     period = Column(String(7), nullable=False)      # 'YYYY-MM'
-    amount = Column(Integer, nullable=False, default=0)   # IDR
+    amount = Column(BigInteger, nullable=False, default=0)   # IDR
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

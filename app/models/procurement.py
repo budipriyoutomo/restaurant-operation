@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, ForeignKey, Integer, String, Text, TIMESTAMP
+from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -22,7 +22,7 @@ class PurchaseRequest(Base):
     source = Column(String(20), nullable=False, default="manual")  # manual | auto_reorder
     requested_by = Column(String(200), nullable=True)
     notes = Column(Text, nullable=True)
-    total_est = Column(Integer, nullable=False, default=0)          # IDR
+    total_est = Column(BigInteger, nullable=False, default=0)          # IDR
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -42,8 +42,8 @@ class PurchaseRequestItem(Base):
     part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="SET NULL"), nullable=True)
     part_name = Column(String(300), nullable=False)
     quantity = Column(Integer, nullable=False)
-    est_unit_cost = Column(Integer, nullable=False, default=0)
-    line_total = Column(Integer, nullable=False, default=0)
+    est_unit_cost = Column(BigInteger, nullable=False, default=0)
+    line_total = Column(BigInteger, nullable=False, default=0)
 
     request = relationship("PurchaseRequest", back_populates="items")
 
@@ -59,7 +59,7 @@ class PurchaseOrder(Base):
     status = Column(String(20), nullable=False, default="sent")     # sent | partially_received | received | cancelled
     outlet = Column(String(200), nullable=True)
     outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
-    total = Column(Integer, nullable=False, default=0)
+    total = Column(BigInteger, nullable=False, default=0)
     created_by = Column(String(200), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -77,8 +77,8 @@ class PurchaseOrderItem(Base):
     part_name = Column(String(300), nullable=False)
     quantity_ordered = Column(Integer, nullable=False)
     quantity_received = Column(Integer, nullable=False, default=0)
-    unit_cost = Column(Integer, nullable=False, default=0)
-    line_total = Column(Integer, nullable=False, default=0)
+    unit_cost = Column(BigInteger, nullable=False, default=0)
+    line_total = Column(BigInteger, nullable=False, default=0)
 
     order = relationship("PurchaseOrder", back_populates="items")
 

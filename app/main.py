@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -22,6 +24,29 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+logger = logging.getLogger("restaurantops")
+
+
+# Middleware order matters here. add_middleware() prepends, so the CORS
+# middleware below — added last — ends up outermost and wraps this one.
+#
+# Starlette's own 500 handler sits *above* all user middleware, so an unhandled
+# exception bypasses CORSMiddleware entirely: the browser then reports a
+# missing Access-Control-Allow-Origin header and hides the real error. Catching
+# it here, underneath CORS, turns a server fault back into an ordinary response
+# that gets the CORS headers — and a logged traceback instead of a silent one.
+@app.middleware("http")
+async def unhandled_exception_to_response(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+        )
+
 
 app.add_middleware(
     CORSMiddleware,

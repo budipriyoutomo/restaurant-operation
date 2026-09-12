@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Date, Text, Integer, Boolean, Numeric, Enum as SAEnum, TIMESTAMP, ForeignKey
+from sqlalchemy import BigInteger, Column, String, Date, Text, Integer, Boolean, Numeric, Enum as SAEnum, TIMESTAMP, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -35,7 +35,7 @@ class Asset(Base):
     install_date = Column(Date)
     last_pm = Column(Date)
     next_pm = Column(Date)
-    purchase_cost = Column(Integer, nullable=True)                # IDR integer — for repair-vs-replace (migration 017)
+    purchase_cost = Column(BigInteger, nullable=True)                # IDR integer — for repair-vs-replace (migration 017)
     qr_token = Column(String(40), nullable=False, unique=True,    # opaque sticker token (migration 026)
                       default=lambda: uuid.uuid4().hex)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
@@ -84,9 +84,9 @@ class WorkOrder(Base):
     downtime_start    = Column(TIMESTAMP(timezone=True), nullable=True)
     downtime_end      = Column(TIMESTAMP(timezone=True), nullable=True)
     labor_hours       = Column(Numeric(8, 2), nullable=True)
-    labor_cost        = Column(Integer, nullable=False, default=0)          # IDR integer
-    parts_cost        = Column(Integer, nullable=False, default=0)          # IDR integer
-    estimated_cost    = Column(Integer, nullable=True)                      # IDR integer
+    labor_cost        = Column(BigInteger, nullable=False, default=0)          # IDR integer
+    parts_cost        = Column(BigInteger, nullable=False, default=0)          # IDR integer
+    estimated_cost    = Column(BigInteger, nullable=True)                      # IDR integer
     currency          = Column(String(3), nullable=False, default="IDR", server_default="IDR")
     requires_approval = Column(Boolean, nullable=False, default=False)
     approval_id       = Column(
