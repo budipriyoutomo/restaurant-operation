@@ -169,7 +169,8 @@ def _create_corrective_wo(
                 status_code=422,
                 detail=(
                     f"{req.assetId!r} is not a valid asset id. "
-                    "Pick an asset from the list, or register it in CMMS first."
+                    "Pick an asset from the list, or register it under "
+                    "Assets \u2192 Physical Assets first."
                 ),
             )
         asset = db.query(Asset).filter(Asset.id == asset_uuid).first()
