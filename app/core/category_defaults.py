@@ -23,6 +23,7 @@ CATEGORY_DEFAULTS: Dict[str, Dict[str, bool]] = {
 # Maps an Issue category to the ApprovalType stored on the generated ApprovalRequest.
 # Mirrors the frontend CATEGORY_TO_APPROVAL_TYPE.
 CATEGORY_TO_APPROVAL_TYPE: Dict[str, Optional[str]] = {
+    "Maintenance":    "maintenance",
     "Procurement":    "procurement",
     "Marketing":      "marketing",
     "Training":       "training",

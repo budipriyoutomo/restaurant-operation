@@ -1,5 +1,9 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# Matches the VARCHAR(500) title columns. Records derived from an Issue add a
+# prefix to its title, and issue_service trims those to fit.
+TITLE_MAX_LENGTH = 500
 
 
 class IssueResponse(BaseModel):
@@ -23,7 +27,9 @@ class IssueResponse(BaseModel):
 
 class CreateIssueRequest(BaseModel):
     """Shape matches the frontend CreateIssueInput interface in lib/types.ts."""
-    title: str
+    # Bounded here so an over-long title is a 422 naming the field, rather than
+    # a VARCHAR(500) overflow surfacing as an opaque 500 mid-transaction.
+    title: str = Field(min_length=1, max_length=TITLE_MAX_LENGTH)
     description: str = ""
     outlet: str
     category: str
@@ -41,7 +47,7 @@ class CreateIssueRequest(BaseModel):
 
 class UpdateIssueRequest(BaseModel):
     status: Optional[str] = None
-    title: Optional[str] = None
+    title: Optional[str] = Field(default=None, max_length=TITLE_MAX_LENGTH)
     description: Optional[str] = None
     assignee: Optional[str] = None
     dueDate: Optional[str] = None

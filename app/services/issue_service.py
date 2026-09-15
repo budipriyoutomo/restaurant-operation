@@ -4,6 +4,7 @@ This is where the auto-generation logic lives: creating an Issue here
 can automatically produce a Task and/or an ApprovalRequest, fully linked.
 """
 
+import uuid
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -58,6 +59,19 @@ def _compute_sla_breach(due_date, status_value: str) -> bool:
         return False
     today = date.today()
     return due_date < today
+
+
+# Every title column is VARCHAR(500). A title that just fits on the Issue can
+# still overflow on the records derived from it, because those carry a prefix —
+# so trim the tail instead of failing the whole create.
+TITLE_MAX = 500
+
+
+def _derived_title(prefix: str, title: str) -> str:
+    combined = f"{prefix}{title}"
+    if len(combined) <= TITLE_MAX:
+        return combined
+    return combined[: TITLE_MAX - 1] + "\u2026"
 
 
 def _parse_date(date_str: Optional[str]):
@@ -144,7 +158,21 @@ def _create_corrective_wo(
     # claims to be about an asset it is not linked to).
     asset = None
     if req.assetId:
-        asset = db.query(Asset).filter(Asset.id == req.assetId).first()
+        # The asset picker falls back to a free-text box when the CMMS module is
+        # still empty, so whatever the user typed arrives here. Reject it as a
+        # 422 — handing a non-UUID straight to Postgres raises a DataError that
+        # escapes as an opaque 500.
+        try:
+            asset_uuid = uuid.UUID(str(req.assetId))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{req.assetId!r} is not a valid asset id. "
+                    "Pick an asset from the list, or register it in CMMS first."
+                ),
+            )
+        asset = db.query(Asset).filter(Asset.id == asset_uuid).first()
         if asset is None:
             # Raised before any commit → the whole issue/WO/approval creation
             # rolls back, leaving no orphan rows.
@@ -167,7 +195,7 @@ def _create_corrective_wo(
         outlet_id=resolve_outlet_id(db, req.outlet),
         issue_id=issue.id,
         issue_number=issue_number,
-        title=f"[Korektif] {req.title}",
+        title=_derived_title("[Korektif] ", req.title),
         description=req.description,
         priority=req.priority,
         status=wo_status,
@@ -183,7 +211,7 @@ def _create_corrective_wo(
             db,
             issue_id=issue.id,
             issue_number=issue_number,
-            title=f"Approval biaya: {req.title}",
+            title=_derived_title("Approval biaya: ", req.title),
             approval_type="maintenance",
             description=req.description,
             requester=req.assignee or "Unassigned",
@@ -232,7 +260,7 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
             issue_id=issue.id,
             issue_number=issue_number,
             number=task_number,
-            title=f"Resolve: {req.title}",
+            title=_derived_title("Resolve: ", req.title),
             description=req.description,
             status=task_status,
             priority=req.priority,
@@ -243,8 +271,18 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
         )
         db.add(task)
 
-    # Auto-generate ApprovalRequest (FR-6, non-Maintenance categories)
-    if req.generateApproval and req.category != "Maintenance":
+    # Corrective Work Order first (Tier 1 §1.3). When the estimated cost clears
+    # the threshold it creates this issue's ApprovalRequest itself, and
+    # approval_requests.issue_id is UNIQUE — so the generic branch below has to
+    # know one already exists.
+    wo = None
+    if req.category == "Maintenance" and req.generateWorkOrder:
+        wo = _create_corrective_wo(db, issue, issue_number, req)
+
+    # Auto-generate ApprovalRequest (FR-6). This used to skip Maintenance
+    # entirely, which silently dropped the user's "Send to Approval Center"
+    # tick whenever no work order had already raised one.
+    if req.generateApproval and (wo is None or wo.approval_id is None):
         approval_number = _next_number(db, "APR", "approval_number_sequences")
         approval_type = get_approval_type(req.category)
         approval = ApprovalRequest(
@@ -262,10 +300,6 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
             status="pending",
         )
         db.add(approval)
-
-    # Auto-generate corrective Work Order for Maintenance issues (Tier 1 §1.3)
-    if req.category == "Maintenance" and req.generateWorkOrder:
-        _create_corrective_wo(db, issue, issue_number, req)
 
     db.commit()
     db.refresh(issue)
