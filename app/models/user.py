@@ -25,13 +25,17 @@ class User(Base):
     email = Column(String(200), nullable=False, unique=True)
     name = Column(String(200), nullable=False)
     password_hash = Column(String(255), nullable=False)
-    role = Column(String(50), nullable=False, default="staff")   # staff | manager | admin
+    # Key of a row in `roles` (migration 031) — staff/manager/admin or a custom role.
+    role = Column(String(50), ForeignKey("roles.key", onupdate="CASCADE"), nullable=False, default="staff")
     is_active = Column(Boolean, nullable=False, default=True)
     preferences = Column(JSONB, nullable=False, default=dict)
+    # Digits with country code, e.g. 6281234567890 (Todo-Pilot §4). NULL = none.
+    whatsapp_number = Column(String(20), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    # Outlets this user is scoped to. Empty for admins (they see everything) and
-    # for users not yet assigned — Tier 4.2 treats "no outlets" as deny-by-default
-    # for non-admins, never as "see all".
+    # Personal outlet override. Non-empty = exactly these outlets, regardless of
+    # the role's default. Empty = inherit the role's outlet access (see
+    # outlet_scope_service.allowed_outlet_ids).
     outlets = relationship("Outlet", secondary=user_outlets, lazy="selectin")
+    role_obj = relationship("Role", lazy="joined")

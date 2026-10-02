@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Enum as SAEnum, TIMESTAMP
+from sqlalchemy import BigInteger, Column, String, Enum as SAEnum, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.database import Base
@@ -23,3 +23,5 @@ class Outlet(Base):
     code = Column(String(10), nullable=False, unique=True)
     status = Column(_sa_enum(OutletStatusEnum, "outlet_status"), nullable=False, default=OutletStatusEnum.operational)
     deleted_at = Column(TIMESTAMP(timezone=True), nullable=True, default=None)
+    # IDR. NULL = use settings.APPROVAL_THRESHOLD_DEFAULT (migration 033).
+    approval_threshold = Column(BigInteger, nullable=True)

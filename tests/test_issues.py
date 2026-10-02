@@ -91,6 +91,7 @@ class TestUpdateIssue:
 
     def test_status_change_creates_audit_log(self, client):
         issue_id = client.post("/api/issues", json=ISSUE_PAYLOAD).json()["id"]
-        client.patch(f"/api/issues/{issue_id}", json={"status": "resolved"})
+        # (resolving here would be a 409 — the generated Task is still open, Todo-Pilot §1)
+        client.patch(f"/api/issues/{issue_id}", json={"status": "in-progress"})
         logs = client.get(f"/api/audit-logs?table_name=issues&record_id={issue_id}").json()
         assert any(log["action"] == "status_change" for log in logs)

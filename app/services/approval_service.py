@@ -244,10 +244,22 @@ def create_approval_with_steps(
     db.add(approval)
     db.flush()   # need approval.id for steps FK
 
+    _add_policy_steps(db, approval)
+
+    if not flush_only:
+        db.commit()
+        db.refresh(approval)
+
+    return approval
+
+
+def _add_policy_steps(db: Session, approval: ApprovalRequest) -> None:
+    """Attach the step chain to a (stepless) approval and notify step 1."""
     # Resolve the step chain from a matching policy (Tier 2.2); fall back to
     # the default 2-step chain (manager → admin) when no policy applies.
     from app.services.approval_policy_service import resolve_steps_for_request
-    policy_steps = resolve_steps_for_request(db, approval_type, amount, outlet_id)
+    approval_type = approval.type.value if hasattr(approval.type, "value") else str(approval.type)
+    policy_steps = resolve_steps_for_request(db, approval_type, approval.amount, approval.outlet_id)
     if policy_steps:
         step_defs = [{"order": s["order"], "role": s["role"]} for s in policy_steps]
     else:
@@ -264,11 +276,67 @@ def create_approval_with_steps(
             status=ApprovalStepStatusEnum.pending.value,
         ))
 
-    if not flush_only:
-        db.commit()
-        db.refresh(approval)
+    # Tell the step-1 approver(s) there is something to decide. Same
+    # transaction: nothing is sent (in-app or email) if creation rolls back.
+    db.flush()
+    notify_next_approver(
+        db,
+        approval_number=approval.number,
+        issue_number=approval.issue_number or approval.title,
+        approver_role=step_defs[0]["role"],
+        approval_id=approval.id,
+        outlet_id=approval.outlet_id,
+    )
 
-    return approval
+
+def restart_approval(db: Session, approval: ApprovalRequest, amount: Optional[int]) -> None:
+    """Re-run a rejected approval from step 1 with a revised amount (Todo-Pilot §2).
+
+    approval_requests.issue_id is UNIQUE, so a revision reuses the same request:
+    the old steps are replaced by a freshly policy-resolved chain (the new amount
+    may match a different policy). The decision history lives in the audit log.
+    No commit — caller commits.
+    """
+    approval.steps.clear()
+    db.flush()   # delete-orphan the old steps before adding new orders 1..n
+    approval.amount = amount
+    approval.status = ApprovalStatusEnum.pending.value
+    approval.current_step_order = 1
+    approval.current_step_since = datetime.now(timezone.utc)
+    approval.escalated = False
+    approval.decided_at = None
+    approval.decided_by = None
+    approval.decision_note = None
+    _add_policy_steps(db, approval)
+    db.refresh(approval)
+
+
+def cancel_pending_approval(db: Session, approval: ApprovalRequest, comment: str) -> bool:
+    """Reject a pending approval on behalf of the system (its Issue was cancelled).
+
+    The active step is marked rejected with `comment`; later steps are skipped.
+    Downstream WO sync is NOT run — the caller cancels WOs itself. No commit.
+    Returns True when the approval was pending and is now rejected.
+    """
+    status = approval.status.value if hasattr(approval.status, "value") else str(approval.status)
+    if status != ApprovalStatusEnum.pending.value:
+        return False
+    now = datetime.now(timezone.utc)
+    for step in approval.steps:
+        step_status = step.status.value if hasattr(step.status, "value") else str(step.status)
+        if step_status != ApprovalStepStatusEnum.pending.value:
+            continue
+        if step.step_order == approval.current_step_order:
+            step.status = ApprovalStepStatusEnum.rejected.value
+            step.decided_at = now
+            step.comment = comment
+        else:
+            step.status = ApprovalStepStatusEnum.skipped.value
+    approval.status = ApprovalStatusEnum.rejected.value
+    approval.decided_at = now
+    approval.decided_by = "system"
+    approval.decision_note = comment
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -363,10 +431,11 @@ def delegate_active_step(
     notify_next_approver(
         db,
         approval_number=approval.number,
-        issue_number=approval.issue_number,
+        issue_number=approval.issue_number or approval.title,
         approver_role=role,
         approval_id=approval.id,
         approver_user_id=step.approver_user_id,
+        outlet_id=approval.outlet_id,
     )
     db.commit()
     return _approval_to_response(approval)
@@ -393,10 +462,13 @@ def escalate_stale_approvals(db: Session, threshold_days: int = ESCALATION_THRES
             db,
             roles=["admin"],
             title=f"Approval macet: {approval.number}",
-            message=f"Approval untuk {approval.issue_number} menggantung > {threshold_days} hari dan dieskalasi.",
+            # issue_number is NULL for purchase-request approvals (Tier 6.1).
+            message=f"Approval untuk {approval.issue_number or approval.title} menggantung > {threshold_days} hari dan dieskalasi.",
             ntype="critical",
             entity_type="approvals",
             entity_id=approval.id,
+            outlet_id=approval.outlet_id,   # only admins who can see that outlet
+            event="approval_escalated",
         )
         escalated.append(approval)
     db.commit()
@@ -519,6 +591,11 @@ def decide_approval(
     if result.request_status == "rejected" and approval.issue:
         approval.issue.status = IssueStatusEnum.waiting.value
 
+    # Final approval may be the last thing holding the Issue open (Todo-Next §2.1).
+    if result.request_status == "approved" and approval.issue:
+        from app.services.issue_closure_service import on_child_completed
+        on_child_completed(db, approval.issue)
+
     db.commit()
     db.refresh(approval)
 
@@ -537,17 +614,18 @@ def decide_approval(
             notify_next_approver(
                 db,
                 approval_number=approval.number,
-                issue_number=approval.issue_number,
+                issue_number=approval.issue_number or approval.title,
                 approver_role=role,
                 approval_id=approval.id,
                 approver_user_id=next_step.approver_user_id,
+                outlet_id=approval.outlet_id,
             )
     else:
         # Final decision (approved/rejected) — notify the requester (Tier 2.3).
         notify_approval_decided(
             db,
             approval_number=approval.number,
-            issue_number=approval.issue_number,
+            issue_number=approval.issue_number or approval.title,
             decision=req.decision,
             requester_name=approval.requester or "",
             approval_id=approval.id,

@@ -6,6 +6,13 @@ from pydantic import BaseModel, Field
 TITLE_MAX_LENGTH = 500
 
 
+class ClosureBlocker(BaseModel):
+    type: str      # task | work_order | approval
+    id: str
+    number: str
+    status: str
+
+
 class IssueResponse(BaseModel):
     """Shape matches the frontend Issue interface in lib/types.ts exactly."""
     id: str
@@ -23,6 +30,9 @@ class IssueResponse(BaseModel):
     taskIds: List[str] = []
     approvalId: Optional[str] = None
     workOrderId: Optional[str] = None   # populated when a WO is auto-generated
+    # Derived records that are not terminal yet — while non-empty the Issue
+    # cannot be resolved/closed (Todo-Pilot §1). Items: {type, id, number, status}.
+    closureBlockers: List[ClosureBlocker] = []
 
 
 class CreateIssueRequest(BaseModel):
@@ -52,3 +62,17 @@ class UpdateIssueRequest(BaseModel):
     assignee: Optional[str] = None
     dueDate: Optional[str] = None
     priority: Optional[str] = None
+
+
+class CancelIssueRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=1000)
+
+
+class ReopenIssueRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class ReviseApprovalRequest(BaseModel):
+    """Revised cost after a rejection; goes back through the approval chain."""
+    amount: int = Field(ge=0)            # IDR integer
+    reason: Optional[str] = Field(default=None, max_length=1000)

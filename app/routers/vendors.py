@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.vendor import Vendor
 from app.services import vendor_maintenance_service as vendor_svc
-from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.auth_service import UserResponse, get_current_user, require_permission
 
 router = APIRouter(prefix="/api/vendors", tags=["procurement"])
 
@@ -79,7 +79,7 @@ def list_vendors(
     category: Optional[str] = Query(None),
     active_only: bool = Query(True),
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_permission("vendors", "view", ("procurement", "view"), ("cmms", "view"))),
 ):
     q = db.query(Vendor)
     if active_only:
@@ -93,7 +93,7 @@ def list_vendors(
 def create_vendor(
     req: CreateVendorRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    _: UserResponse = Depends(require_permission("vendors", "manage")),
 ):
     vendor = Vendor(**req.model_dump())
     db.add(vendor)
@@ -119,7 +119,7 @@ class VendorPerformanceSummary(VendorPerformanceResponse):
 @router.get("/performance-summary", response_model=List[VendorPerformanceSummary])
 def get_performance_summary(
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_permission("vendors", "view", ("procurement", "view"), ("cmms", "view"))),
 ):
     """Performance for every active vendor in one call (Tier 6.2) — so the PO
     buyer can compare on-time% without N round-trips. Best on-time first."""
@@ -137,7 +137,7 @@ def get_performance_summary(
 def get_vendor(
     vendor_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_permission("vendors", "view", ("procurement", "view"), ("cmms", "view"))),
 ):
     v = db.query(Vendor).filter(Vendor.id == vendor_id).first()
     if not v:
@@ -149,7 +149,7 @@ def get_vendor(
 def get_vendor_performance(
     vendor_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_permission("vendors", "view", ("procurement", "view"), ("cmms", "view"))),
 ):
     """WO-level performance stats for a vendor (SLA on-time %, resolution time)."""
     v = db.query(Vendor).filter(Vendor.id == vendor_id).first()
@@ -163,7 +163,7 @@ def update_vendor(
     vendor_id: str,
     req: UpdateVendorRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    _: UserResponse = Depends(require_permission("vendors", "manage")),
 ):
     v = db.query(Vendor).filter(Vendor.id == vendor_id).first()
     if not v:
@@ -180,7 +180,7 @@ def update_vendor(
 def delete_vendor(
     vendor_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    _: UserResponse = Depends(require_permission("vendors", "manage")),
 ):
     v = db.query(Vendor).filter(Vendor.id == vendor_id).first()
     if not v:

@@ -17,7 +17,7 @@ from app.schemas.pm_schedule import (
 from app.services import pm_schedule_service as pm_svc
 from app.services.audit_service import write_audit
 from app.services.outlet_scope_service import assert_can_access, resolve_outlet_id, scoped_query
-from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.auth_service import UserResponse, get_current_user, require_permission
 
 router = APIRouter(prefix="/api/pm-schedules", tags=["cmms"])
 
@@ -55,7 +55,7 @@ def list_pm_schedules(
     asset_id: Optional[str] = Query(None),
     active_only: bool = Query(False),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
 ):
     q = scoped_query(db, PMSchedule, current_user).filter(PMSchedule.deleted_at.is_(None))
     if asset_id:
@@ -70,7 +70,7 @@ def list_pm_schedules(
 def create_pm_schedule(
     req: CreatePMScheduleRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     _validate_interval(req.intervalType)
     if req.triggerType not in {"calendar", "meter"}:
@@ -116,7 +116,7 @@ def create_pm_schedule(
 def get_pm_schedule(
     schedule_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
 ):
     sched = (
         db.query(PMSchedule)
@@ -134,7 +134,7 @@ def update_pm_schedule(
     schedule_id: str,
     req: UpdatePMScheduleRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     sched = (
         db.query(PMSchedule)
@@ -188,7 +188,7 @@ def update_pm_schedule(
 def delete_pm_schedule(
     schedule_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     sched = (
         db.query(PMSchedule)
@@ -208,7 +208,7 @@ def delete_pm_schedule(
 @router.post("/run-now", response_model=RunGeneratorResponse)
 def run_generator_now(
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("admin")),
+    current_user: UserResponse = Depends(require_permission("settings", "manage")),
 ):
     """Manually trigger the preventive-WO generator (demo/pilot). Idempotent."""
     evaluated = (

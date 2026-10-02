@@ -19,7 +19,7 @@ from app.schemas.procurement import (
     ScanLowStockResponse,
 )
 from app.services import procurement_service
-from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.auth_service import UserResponse, get_current_user, require_permission
 from app.services.outlet_scope_service import assert_can_access, scoped_query
 
 # ── Response mappers ────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ pr_router = APIRouter(prefix="/api/purchase-requests", tags=["procurement"])
 def list_prs(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("procurement", "view")),
 ):
     q = scoped_query(db, PurchaseRequest, current_user)
     if status:
@@ -98,7 +98,7 @@ def list_prs(
 def create_pr(
     req: CreatePurchaseRequestRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("procurement", "manage")),
 ):
     pr = procurement_service.create_purchase_request(
         db,
@@ -115,7 +115,7 @@ def create_pr(
 @pr_router.post("/scan-low-stock", response_model=ScanLowStockResponse)
 def scan_low_stock(
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("admin")),
+    _: UserResponse = Depends(require_permission("settings", "manage")),
 ):
     """Raise auto-reorder PRs for every part at/under its reorder level (idempotent)."""
     parts = db.query(Part).filter(Part.deleted_at.is_(None), Part.is_active.is_(True)).all()
@@ -132,7 +132,7 @@ def scan_low_stock(
 
 
 @pr_router.get("/{pr_id}", response_model=PurchaseRequestResponse)
-def get_pr(pr_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(get_current_user)):
+def get_pr(pr_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(require_permission("procurement", "view"))):
     pr = db.query(PurchaseRequest).filter(PurchaseRequest.id == pr_id).first()
     if not pr:
         raise HTTPException(status_code=404, detail="Purchase request not found")
@@ -145,7 +145,7 @@ def order_pr(
     pr_id: str,
     req: OrderPurchaseRequestRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("procurement", "manage")),
 ):
     """Turn an approved PR into a PO to a vendor."""
     pr = db.query(PurchaseRequest).filter(PurchaseRequest.id == pr_id).first()
@@ -168,7 +168,7 @@ po_router = APIRouter(prefix="/api/purchase-orders", tags=["procurement"])
 def list_pos(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("procurement", "view")),
 ):
     q = scoped_query(db, PurchaseOrder, current_user)
     if status:
@@ -177,7 +177,7 @@ def list_pos(
 
 
 @po_router.get("/{po_id}", response_model=PurchaseOrderResponse)
-def get_po(po_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(get_current_user)):
+def get_po(po_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(require_permission("procurement", "view"))):
     po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
@@ -190,7 +190,7 @@ def receive_po(
     po_id: str,
     req: ReceiveGoodsRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("procurement", "manage")),
 ):
     """Record a (possibly partial) goods receipt — this is what tops up stock."""
     po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()

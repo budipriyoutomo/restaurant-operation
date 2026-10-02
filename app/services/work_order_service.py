@@ -22,6 +22,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.asset import (
     Asset,
     WorkOrder,
@@ -45,8 +46,9 @@ from app.services.audit_service import write_audit
 # Constants
 # ---------------------------------------------------------------------------
 
-APPROVAL_THRESHOLD: int = 1_000_000  # Rp 1 juta — trigger approval above this
-# TODO: policy-engine — load from settings table per-outlet instead of hardcoded constant (Tier 2)
+# Global default (Rp 1 juta). Each outlet may override it via
+# outlets.approval_threshold — see get_approval_threshold().
+APPROVAL_THRESHOLD: int = settings.APPROVAL_THRESHOLD_DEFAULT
 
 # Work orders whose status counts as "active" for the purpose of asset sync.
 _ACTIVE_STATUSES = {"scheduled", "in-progress", "on-hold"}
@@ -192,8 +194,12 @@ def transition_work_order(
     wo: WorkOrder,
     target_status: WorkOrderStatusEnum,
     actor_user_id: Optional[str] = None,
+    commit: bool = True,
 ) -> WorkOrder:
     """Validate and apply a status transition with all side effects.
+
+    commit=False keeps everything in the caller's transaction (e.g. cancelling
+    an Issue cancels its WOs atomically).
 
     Side effects:
     - in-progress (corrective): set downtime_start if not already set
@@ -245,8 +251,21 @@ def transition_work_order(
         new_value={"status": target_val, "number": wo.number},
     )
 
-    db.commit()
-    db.refresh(wo)
+    # A completed WO may be the last thing holding its Issue open (Todo-Next §2.1).
+    # Only on completion: a cancel (e.g. approval rejected) must not resolve the Issue.
+    if target_val == "completed" and wo.issue_id:
+        from app.models.issue import Issue
+        from app.services.issue_closure_service import on_child_completed
+        db.flush()
+        issue = db.get(Issue, wo.issue_id)
+        if issue is not None:
+            on_child_completed(db, issue)
+
+    if commit:
+        db.commit()
+        db.refresh(wo)
+    else:
+        db.flush()
     return wo
 
 
@@ -379,3 +398,27 @@ def add_attachment(
     db.commit()
     db.refresh(att)
     return att
+
+
+# ---------------------------------------------------------------------------
+# Approval threshold per outlet (Todo-Next §2.2)
+# ---------------------------------------------------------------------------
+
+def resolve_approval_threshold(outlet_threshold: Optional[int], default: int = APPROVAL_THRESHOLD) -> int:
+    """Pure: the outlet's own threshold wins; NULL means "use the default".
+    0 is a real threshold (every costed WO needs approval), not "unset"."""
+    return default if outlet_threshold is None else outlet_threshold
+
+
+def needs_approval(estimated_cost: Optional[int], threshold: int) -> bool:
+    """Pure: a WO needs approval when its estimate is strictly above the threshold."""
+    return estimated_cost is not None and estimated_cost > threshold
+
+
+def get_approval_threshold(db: Session, outlet_id) -> int:
+    """Threshold for an outlet. A shared/unknown outlet (NULL id) uses the default."""
+    from app.models.outlet import Outlet
+    if outlet_id is None:
+        return APPROVAL_THRESHOLD
+    outlet = db.get(Outlet, outlet_id)
+    return resolve_approval_threshold(outlet.approval_threshold if outlet else None)

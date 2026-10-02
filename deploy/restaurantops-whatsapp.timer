@@ -1,0 +1,14 @@
+[Unit]
+Description=RestaurantOps — send due WhatsApp notifications every minute
+Documentation=file:///opt/restaurantops/DOC.md
+
+[Timer]
+# Every minute: retries back off 1 / 5 / 30 minutes, so this is fine-grained enough.
+OnCalendar=*:0/1
+AccuracySec=10s
+Persistent=true
+
+Unit=restaurantops-whatsapp.service
+
+[Install]
+WantedBy=timers.target

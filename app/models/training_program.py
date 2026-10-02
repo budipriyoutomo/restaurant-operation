@@ -1,6 +1,7 @@
 import uuid
-from sqlalchemy import ForeignKey, Column, String, Text, Numeric, Integer, Date, TIMESTAMP
+from sqlalchemy import ForeignKey, Column, String, Text, Numeric, Integer, Date, TIMESTAMP, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -20,7 +21,16 @@ class TrainingProgram(Base):
     trainer          = Column(String(200), nullable=True)
     scheduled_date   = Column(Date, nullable=True)
     duration_hours   = Column(Numeric(5, 1), nullable=True)
-    status           = Column(String(20), nullable=False, default="scheduled")
+    # Native Postgres enum in the migrations — must not be String (psycopg would
+    # send ::VARCHAR and every INSERT would fail). See test_unit_model_enums.
+    status           = Column(SAEnum("scheduled", "ongoing", "completed", "cancelled",
+                                     name="training_program_status", create_type=False),
+                              nullable=False, default="scheduled")
     max_participants = Column(Integer, nullable=True)
     created_at       = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at       = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    enrollments = relationship(
+        "TrainingEnrollment", cascade="all, delete-orphan", passive_deletes=True,
+        order_by="TrainingEnrollment.user_name", lazy="selectin",
+    )

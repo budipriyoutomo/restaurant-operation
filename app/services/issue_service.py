@@ -15,14 +15,26 @@ from sqlalchemy.orm import Session
 from app.core.category_defaults import get_approval_type
 from app.models.approval import ApprovalRequest, ApprovalNumberSequence
 from app.models.asset import Asset, WorkOrder, WorkOrderNumberSequence
-from app.models.enums import IssueStatusEnum, PriorityEnum, WorkOrderStatusEnum
+from app.models.enums import IssueStatusEnum, PriorityEnum, TaskStatusEnum, WorkOrderStatusEnum
 from app.models.issue import Issue, IssueNumberSequence
 from app.models.task import Task, TaskNumberSequence
 from app.schemas.issue import CreateIssueRequest, IssueResponse, UpdateIssueRequest
 from app.services.audit_service import write_audit
+from app.services.guest_service import ensure_case as ensure_guest_case
+from app.services.issue_closure_service import (
+    ISSUE_CLOSING,
+    ISSUE_FINAL,
+    TASK_TERMINAL,
+    WORK_ORDER_TERMINAL,
+    can_close_issue,
+)
 from app.services.outlet_scope_service import resolve_outlet_id, scoped_query
-from app.services.notification_service import notify_issue_created, notify_issue_status_changed
-from app.services.work_order_service import APPROVAL_THRESHOLD
+from app.services.notification_service import (
+    notify_issue_created,
+    notify_issue_status_changed,
+    notify_work_order_assigned,
+)
+from app.services.work_order_service import get_approval_threshold, needs_approval
 
 
 # ---------------------------------------------------------------------------
@@ -52,10 +64,14 @@ def _next_number(db: Session, prefix: str, table: str) -> str:
     return f"{prefix}-{year}-{seq:05d}"
 
 
+def _value(v) -> str:
+    return v.value if hasattr(v, "value") else str(v)
+
+
 def _compute_sla_breach(due_date, status_value: str) -> bool:
     if due_date is None:
         return False
-    if status_value in ("resolved", "closed"):
+    if status_value in ISSUE_FINAL:
         return False
     today = date.today()
     return due_date < today
@@ -131,6 +147,7 @@ def _issue_to_response(issue: Issue) -> IssueResponse:
         taskIds=[str(t.id) for t in (issue.tasks or [])],
         approvalId=str(issue.approval.id) if issue.approval else None,
         workOrderId=wo_id,
+        closureBlockers=[b.as_dict() for b in can_close_issue(issue).blockers],
     )
 
 
@@ -146,7 +163,7 @@ def _create_corrective_wo(
 ) -> WorkOrder:
     """Create a corrective Work Order linked to the issue (same transaction).
 
-    If estimated_cost > APPROVAL_THRESHOLD:
+    If estimated_cost > the outlet's approval threshold (get_approval_threshold):
       - WO status = on-hold, requires_approval = True
       - Create ApprovalRequest (type=maintenance) + 2 default steps
       - Link WO.approval_id → the new ApprovalRequest
@@ -182,10 +199,10 @@ def _create_corrective_wo(
     asset_name = asset.name if asset else req.title
     wo_number  = _next_wo_number(db)
 
-    needs_approval = (
-        req.estimatedCost is not None and req.estimatedCost > APPROVAL_THRESHOLD
+    requires_approval = needs_approval(
+        req.estimatedCost, get_approval_threshold(db, resolve_outlet_id(db, req.outlet)),
     )
-    wo_status = WorkOrderStatusEnum.on_hold.value if needs_approval else "scheduled"
+    wo_status = WorkOrderStatusEnum.on_hold.value if requires_approval else "scheduled"
 
     wo = WorkOrder(
         number=wo_number,
@@ -202,12 +219,13 @@ def _create_corrective_wo(
         status=wo_status,
         assignee=req.assignee or "Unassigned",
         estimated_cost=req.estimatedCost,
-        requires_approval=needs_approval,
+        requires_approval=requires_approval,
     )
     db.add(wo)
     db.flush()  # need wo.id before creating approval
+    notify_work_order_assigned(db, wo)
 
-    if needs_approval:
+    if requires_approval:
         approval = create_approval_with_steps(
             db,
             issue_id=issue.id,
@@ -226,11 +244,12 @@ def _create_corrective_wo(
     return wo
 
 
-def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
+def create_issue(db: Session, req: CreateIssueRequest, commit: bool = True) -> IssueResponse:
     """Create an Issue and optionally auto-generate a linked Task and/or Approval.
 
     All three inserts happen in the same database transaction so a failure
-    in task/approval creation rolls back the issue too.
+    in task/approval creation rolls back the issue too. commit=False leaves the
+    commit to the caller (e.g. a QA audit submit raising several Issues at once).
     """
     issue_number = _next_number(db, "ISS", "issue_number_sequences")
 
@@ -252,6 +271,8 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
     )
     db.add(issue)
     db.flush()  # get issue.id without committing
+    # A Guest Service issue always carries its guest case (Todo-Pilot §8).
+    ensure_guest_case(db, issue)
 
     # Auto-generate Task (FR-6)
     if req.generateTask:
@@ -283,30 +304,33 @@ def create_issue(db: Session, req: CreateIssueRequest) -> IssueResponse:
     # Auto-generate ApprovalRequest (FR-6). This used to skip Maintenance
     # entirely, which silently dropped the user's "Send to Approval Center"
     # tick whenever no work order had already raised one.
+    # Must go through create_approval_with_steps: a bare ApprovalRequest has no
+    # steps, so it can never be decided ("No step with order 1").
     if req.generateApproval and (wo is None or wo.approval_id is None):
-        approval_number = _next_number(db, "APR", "approval_number_sequences")
-        approval_type = get_approval_type(req.category)
-        approval = ApprovalRequest(
+        from app.services.approval_service import create_approval_with_steps
+
+        create_approval_with_steps(
+            db,
             issue_id=issue.id,
             issue_number=issue_number,
-            number=approval_number,
             title=req.title,
-            type=approval_type,
+            approval_type=get_approval_type(req.category),
             description=req.description,
             requester=req.assignee or "Unassigned",
             outlet=req.outlet,
             outlet_id=resolve_outlet_id(db, req.outlet),
-            requested_date=date.today(),
             amount=req.approvalAmount,
-            status="pending",
+            flush_only=True,   # stay in caller's transaction
         )
-        db.add(approval)
 
-    db.commit()
+    if commit:
+        db.commit()
+    db.flush()
     db.refresh(issue)
 
     notify_issue_created(db, issue_number, req.title, req.outlet, issue.id, outlet_id=issue.outlet_id)
-    db.commit()
+    if commit:
+        db.commit()
 
     return _issue_to_response(issue)
 
@@ -338,14 +362,38 @@ def get_issue(db: Session, issue_id: str) -> Optional[IssueResponse]:
     return _issue_to_response(issue)
 
 
-def update_issue(db: Session, issue_id: str, req: UpdateIssueRequest) -> Optional[IssueResponse]:
+def _guard_status_change(issue: Issue, old_status: str, new_status: str) -> None:
+    """Plain PATCH status rules (Todo-Pilot §1–2). Raises 409/422."""
+    if new_status not in {e.value for e in IssueStatusEnum}:
+        raise HTTPException(status_code=422, detail=f"Unknown issue status: {new_status!r}")
+    if new_status == IssueStatusEnum.cancelled.value:
+        raise HTTPException(status_code=409, detail="Use POST /api/issues/{id}/cancel to cancel an Issue.")
+    if old_status in ("closed", "cancelled"):
+        raise HTTPException(status_code=409, detail=f"A {old_status} Issue cannot change status.")
+    if old_status == "resolved" and new_status != "closed":
+        raise HTTPException(
+            status_code=409,
+            detail="Use POST /api/issues/{id}/reopen (with a reason) to reopen a resolved Issue.",
+        )
+    if new_status in ISSUE_CLOSING:
+        check = can_close_issue(issue)
+        if not check.can_close:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": check.message(), "blockers": [b.as_dict() for b in check.blockers]},
+            )
+
+
+def update_issue(db: Session, issue_id: str, req: UpdateIssueRequest,
+                 actor: str = "system") -> Optional[IssueResponse]:
     issue = db.query(Issue).filter(Issue.id == issue_id).first()
     if not issue:
         return None
 
-    old_status = issue.status.value if hasattr(issue.status, "value") else str(issue.status)
+    old_status = _value(issue.status)
 
-    if req.status is not None:
+    if req.status is not None and req.status != old_status:
+        _guard_status_change(issue, old_status, req.status)
         issue.status = req.status
     if req.title is not None:
         issue.title = req.title
@@ -368,6 +416,7 @@ def update_issue(db: Session, issue_id: str, req: UpdateIssueRequest) -> Optiona
             action="status_change",
             old_value={"status": old_status, "number": issue.number},
             new_value={"status": new_status, "number": issue.number},
+            performed_by=actor,
         )
         notify_issue_status_changed(db, issue.number, issue.title, old_status, new_status, issue.id)
     elif any(v is not None for v in [req.title, req.description, req.assignee, req.priority, req.dueDate]):
@@ -377,8 +426,143 @@ def update_issue(db: Session, issue_id: str, req: UpdateIssueRequest) -> Optiona
             record_id=str(issue.id),
             action="update",
             new_value={"number": issue.number, "title": issue.title},
+            performed_by=actor,
         )
 
     db.commit()
     db.refresh(issue)
     return _issue_to_response(issue)
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle: cancel / reopen / revise after rejection (Todo-Pilot §2)
+# ---------------------------------------------------------------------------
+
+def _audit_status(db: Session, issue: Issue, old_status: str, new_status: str,
+                  actor: str, **extra) -> None:
+    write_audit(
+        db,
+        table_name="issues",
+        record_id=str(issue.id),
+        action="status_change",
+        old_value={"status": old_status, "number": issue.number},
+        new_value={"status": new_status, "number": issue.number, **extra},
+        performed_by=actor,
+    )
+    notify_issue_status_changed(db, issue.number, issue.title, old_status, new_status, issue.id)
+
+
+def cancel_issue(db: Session, issue: Issue, reason: Optional[str], actor: str) -> IssueResponse:
+    """Cancel an Issue and everything still open under it, in one transaction.
+
+    - Tasks not yet terminal        → cancelled
+    - Work Orders not yet terminal  → cancelled (via the WO state machine)
+    - a pending Approval            → rejected, with a system comment
+    """
+    from app.services.approval_service import cancel_pending_approval
+    from app.services.work_order_service import transition_work_order
+
+    old_status = _value(issue.status)
+    if old_status in ISSUE_FINAL:
+        raise HTTPException(status_code=409, detail=f"Issue is already {old_status}.")
+
+    note = f"Dibatalkan otomatis: Issue {issue.number} dibatalkan"
+    if reason:
+        note += f" — {reason}"
+
+    for task in issue.tasks:
+        task_old = _value(task.status)
+        if task_old in TASK_TERMINAL:
+            continue
+        task.status = TaskStatusEnum.cancelled.value
+        write_audit(db, table_name="tasks", record_id=str(task.id), action="status_change",
+                    old_value={"status": task_old, "number": task.number},
+                    new_value={"status": "cancelled", "number": task.number, "reason": "issue_cancelled"},
+                    performed_by=actor)
+
+    if issue.approval is not None and cancel_pending_approval(db, issue.approval, note):
+        write_audit(db, table_name="approval_requests", record_id=str(issue.approval.id),
+                    action="status_change",
+                    old_value={"status": "pending", "number": issue.approval.number},
+                    new_value={"status": "rejected", "number": issue.approval.number,
+                               "reason": "issue_cancelled"},
+                    performed_by=actor)
+
+    for wo in issue.work_orders:
+        if _value(wo.status) in WORK_ORDER_TERMINAL:
+            continue
+        transition_work_order(db, wo, WorkOrderStatusEnum.cancelled, commit=False)
+
+    issue.status = IssueStatusEnum.cancelled.value
+    _audit_status(db, issue, old_status, "cancelled", actor, reason=reason or "")
+
+    db.commit()
+    db.refresh(issue)
+    return _issue_to_response(issue)
+
+
+def reopen_issue(db: Session, issue: Issue, reason: str, actor: str) -> IssueResponse:
+    """resolved → in-progress. The reason is mandatory and kept in the audit log."""
+    old_status = _value(issue.status)
+    if old_status != IssueStatusEnum.resolved.value:
+        raise HTTPException(status_code=409,
+                            detail=f"Only a resolved Issue can be reopened (this one is {old_status}).")
+    issue.status = IssueStatusEnum.in_progress.value
+    _audit_status(db, issue, old_status, issue.status, actor, reason=reason, event="reopen")
+    db.commit()
+    db.refresh(issue)
+    return _issue_to_response(issue)
+
+
+def revise_approval(db: Session, issue: Issue, amount: int, reason: Optional[str],
+                    actor: str) -> IssueResponse:
+    """After a rejection (Issue `waiting`), send a revised cost back through approval.
+
+    Reuses the Issue's ApprovalRequest (issue_id is UNIQUE) with a fresh step
+    chain. The corrective WO the rejection cancelled was never started, so it is
+    put back on hold with the new estimate instead of creating a second WO.
+    """
+    from app.services.approval_service import restart_approval
+
+    old_status = _value(issue.status)
+    approval = issue.approval
+    if old_status != IssueStatusEnum.waiting.value or approval is None \
+            or _value(approval.status) != "rejected":
+        raise HTTPException(
+            status_code=409,
+            detail="Only a waiting Issue whose approval was rejected can be revised.",
+        )
+
+    old_amount = approval.amount
+    restart_approval(db, approval, amount)
+    write_audit(db, table_name="approval_requests", record_id=str(approval.id), action="revise",
+                old_value={"status": "rejected", "amount": old_amount, "number": approval.number},
+                new_value={"status": "pending", "amount": amount, "number": approval.number,
+                           "reason": reason or ""},
+                performed_by=actor)
+
+    for wo in issue.work_orders:
+        if wo.approval_id == approval.id and _value(wo.status) == WorkOrderStatusEnum.cancelled.value:
+            # Deliberately outside the WO state machine (cancelled is terminal
+            # there): this WO was cancelled by the rejection before any work.
+            wo.status = WorkOrderStatusEnum.on_hold.value
+            wo.estimated_cost = amount
+            write_audit(db, table_name="work_orders", record_id=str(wo.id), action="status_change",
+                        old_value={"status": "cancelled"},
+                        new_value={"status": "on-hold", "number": wo.number,
+                                   "reason": "approval_revised", "estimatedCost": amount},
+                        performed_by=actor)
+
+    issue.status = IssueStatusEnum.in_progress.value
+    _audit_status(db, issue, old_status, issue.status, actor, reason="approval_revised")
+    db.commit()
+    db.refresh(issue)
+    return _issue_to_response(issue)
+
+
+# Closure rules and the Task → Issue roll-up live in issue_closure_service;
+# re-exported here for existing callers/tests.
+from app.services.issue_closure_service import (  # noqa: E402,F401
+    derive_issue_status_from_tasks,
+    rollup_issue_from_tasks,
+)

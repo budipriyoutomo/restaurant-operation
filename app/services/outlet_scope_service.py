@@ -9,10 +9,15 @@ Model (see migration 024):
   - `outlet_id` : FK to outlets, for integrity + filtering. NULL means
                   "not tied to a single outlet" (shared / All Outlets).
 
-Visibility rule for a non-admin:
-    outlet_id IS NULL  OR  outlet_id IN (the user's outlets)
+Which outlets a user may see (migration 031), first match wins:
+  1. the user's personal override (`user_outlets`), if non-empty
+  2. every outlet, if the user's role is `all_outlets`
+  3. the role's default outlets (`role_outlets`)
 
-Admins bypass scoping entirely. A non-admin with no outlet assignment therefore
+Visibility rule for a user without all-outlet access:
+    outlet_id IS NULL  OR  outlet_id IN (allowed outlets)
+
+All-outlet users bypass scoping entirely. A user who resolves to no outlets
 sees only shared rows — never everything.
 """
 
@@ -62,28 +67,43 @@ def resolve_outlet_id(db: Session, outlet_name: Optional[str]) -> Optional[uuid.
 # Read path — scoping
 # ---------------------------------------------------------------------------
 
-def is_admin(user) -> bool:
-    role = getattr(user, "role", None)
-    return role == "admin"
+def allowed_outlet_ids(db: Session, user) -> Optional[List[uuid.UUID]]:
+    """Outlets the user may see. None = all outlets; [] = none (shared rows only).
 
-
-def user_outlet_ids(db: Session, user) -> List[uuid.UUID]:
-    """Outlet ids the user is assigned to. Empty list = assigned to none."""
+    Always resolved from the DB, never from the caller object, so a role edit
+    takes effect on the very next request.
+    """
     row = db.query(User).filter(User.id == user.id).first()
     if row is None:
         return []
-    return [o.id for o in (row.outlets or [])]
+    if row.outlets:
+        return [o.id for o in row.outlets]
+    role = row.role_obj
+    if role is None:
+        return []
+    if role.all_outlets:
+        return None
+    return [o.id for o in (role.outlets or []) if o.deleted_at is None]
+
+
+def has_all_outlets(db: Session, user) -> bool:
+    return allowed_outlet_ids(db, user) is None
+
+
+def user_outlet_ids(db: Session, user) -> List[uuid.UUID]:
+    """Allowed outlet ids as a list. Only meaningful when not has_all_outlets()."""
+    return allowed_outlet_ids(db, user) or []
 
 
 def scope_filter(db: Session, model, user):
     """Return a SQLAlchemy filter expression restricting `model` to `user`'s outlets,
-    or None when no restriction applies (admin, or model has no outlet_id)."""
-    if is_admin(user):
-        return None
+    or None when no restriction applies (all-outlet access, or model has no outlet_id)."""
     column = getattr(model, "outlet_id", None)
     if column is None:
         return None
-    allowed = user_outlet_ids(db, user)
+    allowed = allowed_outlet_ids(db, user)
+    if allowed is None:
+        return None
     if not allowed:
         # No assignment: shared rows only. Never "everything".
         return column.is_(None)
@@ -98,8 +118,8 @@ def scoped_query(db: Session, model, user):
 
 
 def assert_can_write_outlet(db: Session, outlet_id, user) -> None:
-    """Guard the write path: a non-admin may only create/modify records in an
-    outlet they are assigned to.
+    """Guard the write path: a user without all-outlet access may only
+    create/modify records in an outlet they are allowed to see.
 
     Without this, scoping is only half enforced — a manager could create records
     in another branch's outlet and then not even see them, silently polluting
@@ -109,9 +129,10 @@ def assert_can_write_outlet(db: Session, outlet_id, user) -> None:
     is not a secret, and the caller is being told they lack permission for an
     action they explicitly asked for.
     """
-    if is_admin(user) or outlet_id is None:
-        return                       # admin, or a shared/global record
-    if outlet_id not in user_outlet_ids(db, user):
+    if outlet_id is None:
+        return                       # a shared/global record
+    allowed = allowed_outlet_ids(db, user)
+    if allowed is not None and outlet_id not in allowed:
         raise HTTPException(status_code=403, detail="You are not assigned to this outlet")
 
 
@@ -121,10 +142,11 @@ def assert_can_access(db: Session, obj, user) -> None:
     Raises 404 (not 403) for rows outside the caller's outlets — a 403 would
     confirm that the record exists, leaking information across outlets.
     """
-    if obj is None or is_admin(user):
+    if obj is None:
         return
     outlet_id = getattr(obj, "outlet_id", None)
     if outlet_id is None:
         return                       # shared row
-    if outlet_id not in user_outlet_ids(db, user):
+    allowed = allowed_outlet_ids(db, user)
+    if allowed is not None and outlet_id not in allowed:
         raise HTTPException(status_code=404, detail="Not found")

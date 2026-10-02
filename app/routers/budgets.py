@@ -12,7 +12,7 @@ from app.schemas.budget import (
     CreateBudgetRequest,
     UpdateBudgetRequest,
 )
-from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.auth_service import UserResponse, get_current_user, require_permission
 
 router = APIRouter(prefix="/api/budgets", tags=["procurement"])
 
@@ -29,7 +29,7 @@ def _to_response(b: Budget) -> BudgetResponse:
 def list_budgets(
     period: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(get_current_user),
+    _: UserResponse = Depends(require_permission("budgets", "view", ("analytics", "view"))),
 ):
     q = db.query(Budget)
     if period:
@@ -41,7 +41,7 @@ def list_budgets(
 def create_budget(
     req: CreateBudgetRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("admin")),
+    _: UserResponse = Depends(require_permission("budgets", "manage")),
 ):
     outlet = db.query(Outlet).filter(Outlet.id == req.outletId, Outlet.deleted_at.is_(None)).first()
     if not outlet:
@@ -60,7 +60,7 @@ def update_budget(
     budget_id: str,
     req: UpdateBudgetRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("admin")),
+    _: UserResponse = Depends(require_permission("budgets", "manage")),
 ):
     b = db.query(Budget).filter(Budget.id == budget_id).first()
     if not b:
@@ -76,7 +76,7 @@ def update_budget(
 def delete_budget(
     budget_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("admin")),
+    _: UserResponse = Depends(require_permission("budgets", "manage")),
 ):
     b = db.query(Budget).filter(Budget.id == budget_id).first()
     if not b:

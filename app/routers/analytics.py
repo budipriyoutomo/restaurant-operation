@@ -10,7 +10,7 @@ from app.models.approval import ApprovalRequest
 from app.models.issue import Issue
 from app.models.task import Task
 from app.services import cmms_analytics_service as cmms_svc
-from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.auth_service import UserResponse, get_current_user, require_permission
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -62,7 +62,7 @@ def _sla_breach(due_date, status_value: str) -> bool:
 
 
 @router.get("/summary")
-def get_summary(db: Session = Depends(get_db), _: UserResponse = Depends(get_current_user)):
+def get_summary(db: Session = Depends(get_db), _: UserResponse = Depends(require_permission("dashboard", "view", ("analytics", "view")))):
     issues = db.query(Issue).all()
 
     issue_by_status: Dict[str, int] = {}
@@ -125,7 +125,7 @@ def get_summary(db: Session = Depends(get_db), _: UserResponse = Depends(get_cur
 def get_budget_status(
     period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("analytics", "view")),
 ):
     """Budget vs actual spend (WO + PO) per outlet for a month (Tier 6.3),
     outlet-scoped for non-admins."""
@@ -137,7 +137,7 @@ def get_budget_status(
 def get_cmms_analytics(
     outlet: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    _: UserResponse = Depends(require_permission("analytics", "view")),
 ):
     """Per-asset reliability & cost metrics + fleet roll-up (Tier 3).
 

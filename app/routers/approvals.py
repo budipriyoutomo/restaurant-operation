@@ -15,7 +15,7 @@ from app.schemas.approval import (
 )
 from app.services import approval_service
 from app.services.approval_service import ESCALATION_THRESHOLD_DAYS, ForbiddenStepError
-from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.auth_service import UserResponse, get_current_user, require_permission
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])
 
@@ -25,7 +25,7 @@ def list_approvals(
     type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("approvals", "view")),
 ):
     """List Approval Requests with optional type/status filters (FR-12)."""
     return approval_service.list_approvals(db, type_filter=type, status_filter=status, user=current_user)
@@ -35,7 +35,7 @@ def list_approvals(
 def get_approval(
     approval_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("approvals", "view")),
 ):
     """Get a single Approval Request with all steps and current_step_order."""
     approval = scoped_query(db, ApprovalRequest, current_user).filter(
@@ -53,7 +53,7 @@ def decide_approval(
     approval_id: str,
     req: DecideApprovalRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("approvals", "manage")),
 ):
     """Decide the *active step* of an ApprovalRequest on behalf of the caller.
 
@@ -71,10 +71,12 @@ def decide_approval(
             db,
             approval_id,
             req,
-            actor_role=current_user.role,
+            actor_role=current_user.approval_tier,
         )
     except ForbiddenStepError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
     if not result:
         raise HTTPException(status_code=404, detail="Approval not found")
@@ -85,7 +87,7 @@ def decide_approval(
 def escalate_stale(
     req: EscalateStaleRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("admin")),
+    current_user: UserResponse = Depends(require_permission("settings", "manage")),
 ):
     """Flag & notify pending approvals stuck longer than the threshold (Tier 3).
     Manual/cron trigger; idempotent until the request advances."""
@@ -102,7 +104,7 @@ def delegate_approval(
     approval_id: str,
     req: DelegateApprovalRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("approvals", "manage")),
 ):
     """Reassign the active approval step to another user and/or role (Tier 3)."""
     if req.toUserId is None and req.toRole is None:

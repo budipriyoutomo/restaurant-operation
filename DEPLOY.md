@@ -95,6 +95,70 @@ PY
 only creates work orders that are actually due, so hourly is safe. Check it with
 `dc logs pm-generator`.
 
+### Approval escalation job
+`approval-escalator` runs `scripts/run_escalate_stale` every hour. Pending
+approvals whose active step has waited longer than 3 days
+(`ESCALATION_THRESHOLD_DAYS` in `app/services/approval_service.py`) are flagged `escalated` and admins get a critical notification. It is idempotent:
+a request is escalated once per stuck step. Check it with
+`dc logs approval-escalator`.
+
+Without Docker, use the systemd units in `deploy/`
+(`restaurantops-escalate.{service,timer}`, same setup as the PM timer).
+
+### Email notifications (optional)
+Notifications are always stored in-app. To also send email, set SMTP in
+`.env.production` and restart `api`, `pm-generator` and `approval-escalator`:
+
+```bash
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=...
+SMTP_PASSWORD=...
+SMTP_STARTTLS=true
+SMTP_FROM=RestaurantOps <no-reply@yourdomain.com>
+APP_URL=https://app.yourdomain.com     # link in the email body
+```
+
+Emailed events: approval waiting for a decision, approval escalated, request
+approved/rejected (to the requester), work order assigned. Each user can switch
+each one off under **Settings → Email**. Mail is sent after the database commit
+on a background thread, so an SMTP outage never fails a user's action; failures
+are logged (`dc logs api`). Leave `SMTP_HOST` empty to stay in-app only, or set
+`EMAIL_BACKEND=console` to log emails instead of sending them.
+
+### WhatsApp notifications (optional)
+WhatsApp goes out through a self-hosted [WuzAPI](https://github.com/asternic/wuzapi)
+instance (one WhatsApp number paired by QR code in WuzAPI). Set in
+`.env.production` and restart `api`, `pm-generator`, `approval-escalator` and
+`whatsapp-retry`:
+
+```bash
+WUZAPI_URL=http://wuzapi:8080        # base URL reachable from the api container
+WUZAPI_TOKEN=...                     # the WuzAPI user token (sent as the Token header)
+WHATSAPP_MAX_PER_HOUR=20             # per recipient; extra messages are skipped
+WHATSAPP_DEDUP_MINUTES=10            # same event + record + recipient = one message
+APP_URL=https://app.yourdomain.com   # link at the bottom of each message
+```
+
+Events: approval waiting for my step, approval escalated (admins), my request
+approved/rejected, work order assigned to me, issue ready to close (managers of
+that outlet). WhatsApp is **opt-in**: each user saves their number and switches
+it on under **Settings → WhatsApp** ("Send test" checks the pairing). Admins can
+also set a number under Users & Roles (API: `PATCH /api/auth/users/{id}`).
+
+Messages are written to the `whatsapp_outbox` table in the same transaction as
+the action and sent after commit on a background thread, so WuzAPI being down
+never fails a user's action. `whatsapp-retry` resends failures after 1, 5 and
+30 minutes; after `WHATSAPP_MAX_ATTEMPTS` (4) the row is `failed`. Inspect with:
+
+```bash
+dc exec db psql -U restaurantops -c "SELECT status, count(*) FROM whatsapp_outbox GROUP BY 1"
+dc logs whatsapp-retry
+```
+
+Set `WHATSAPP_BACKEND=console` to log messages instead of sending them.
+Without Docker: `deploy/restaurantops-whatsapp.{service,timer}`.
+
 ### Reverse proxy / TLS
 
 **Option A — bundled Caddy** (`--profile proxy`): set `DOMAIN` and `ACME_EMAIL`
@@ -113,20 +177,49 @@ git pull                       # or re-copy the folder
 dc up -d --build               # entrypoint runs `alembic upgrade head` automatically
 ```
 
-### Backups (do this)
+### Backups
+
+The `db-backup` service takes a backup once a day at `BACKUP_HOUR` (default
+03:00, `TZ` default `Asia/Jakarta`):
+
+- `pg_dump` custom-format archive of the database
+- tarball of the `uploads` volume (work-order photos)
+
+Files land in `./backups/` on the host (`BACKUP_HOST_DIR` to change it):
+`daily/` keeps the last `BACKUP_KEEP_DAILY` (7) runs, and Sunday's run is also
+copied to `weekly/`, which keeps `BACKUP_KEEP_WEEKLY` (4). A failed run leaves no
+partial file and retries 10 minutes later. Check it with `dc logs db-backup`.
+
+Take a backup now (e.g. before an upgrade):
 
 ```bash
-# Nightly dump (add to root crontab)
-0 3 * * * cd /path/to/backend && docker compose --env-file .env.production exec -T db \
-  pg_dump -U restaurantops restaurantops | gzip > /var/backups/restaurantops-$(date +\%F).sql.gz
-
-# Restore
-gunzip -c backup.sql.gz | docker compose --env-file .env.production exec -T db \
-  psql -U restaurantops -d restaurantops
+dc exec db-backup sh /usr/local/bin/backup_db.sh
 ```
 
-Also back up the `uploads` volume (work-order photos):
-`docker run --rm -v backend_uploads:/data -v $PWD:/out alpine tar czf /out/uploads.tgz -C /data .`
+**Copy backups off the VPS.** A backup on the same disk does not survive losing
+the VPS. Sync `./backups` to object storage from the host, e.g. with
+[rclone](https://rclone.org) configured for S3/B2/R2 (root crontab):
+
+```bash
+30 4 * * * rclone sync /path/to/backend/backups remote:restaurantops-backups
+```
+
+**Restore** (destructive — overwrites the database):
+
+```bash
+dc stop api pm-generator approval-escalator     # no writes during the restore
+dc exec db-backup sh /usr/local/bin/restore_db.sh /backups/daily/<file>.dump --yes
+dc start api pm-generator approval-escalator
+
+# Photos
+docker run --rm -v backend_uploads:/data -v $PWD/backups/daily:/in alpine \
+  sh -c 'tar xzf /in/uploads-<stamp>.tar.gz -C /data'
+```
+
+`restore_db.sh` refuses to run without `--yes`, and restores in a single
+transaction, so a broken dump leaves the database unchanged. Test a restore once
+after the first deploy (restore into a scratch database by setting
+`PGDATABASE=<scratch>` on the `exec`).
 
 ### Security checklist
 - [ ] `SECRET_KEY` is a unique 64-hex value, `ENVIRONMENT=production`

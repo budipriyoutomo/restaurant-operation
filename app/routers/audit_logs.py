@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.audit_log import AuditLog
 from app.schemas.audit_log import AuditLogResponse
-from app.services.auth_service import UserResponse, require_roles
+from app.services.auth_service import UserResponse, require_permission
 
 router = APIRouter(prefix="/api/audit-logs", tags=["audit"])
 
@@ -30,7 +30,7 @@ def list_audit_logs(
     record_id: Optional[str] = Query(None, description="Filter by record UUID"),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("manager", "admin")),
+    _: UserResponse = Depends(require_permission("reports", "view")),
 ):
     """Return audit log entries, newest first. Filter by table_name and/or record_id."""
     q = db.query(AuditLog)

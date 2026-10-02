@@ -20,7 +20,7 @@ from app.schemas.pm_schedule import CreateMeterReadingRequest, MeterReadingRespo
 from app.services import work_order_service as wo_svc
 from app.services.audit_service import write_audit
 from app.services.outlet_scope_service import assert_can_access, assert_can_write_outlet, resolve_outlet_id, scoped_query
-from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.auth_service import UserResponse, get_current_user, require_permission
 from app.services.work_order_service import compute_downtime_hours
 
 router = APIRouter(prefix="/api/assets", tags=["cmms"])
@@ -77,7 +77,7 @@ def list_assets(
     outlet: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("assets", "view", ("cmms", "view"))),
 ):
     query = scoped_query(db, Asset, current_user)
     if outlet:
@@ -88,7 +88,7 @@ def list_assets(
 
 
 @router.post("", response_model=AssetResponse, status_code=201)
-def create_asset(req: CreateAssetRequest, db: Session = Depends(get_db), current_user: UserResponse = Depends(require_roles("manager", "admin"))):
+def create_asset(req: CreateAssetRequest, db: Session = Depends(get_db), current_user: UserResponse = Depends(require_permission("assets", "manage"))):
     outlet_id = resolve_outlet_id(db, req.outlet)
     assert_can_write_outlet(db, outlet_id, current_user)
     number = _next_asset_number(db)
@@ -120,7 +120,7 @@ def create_asset(req: CreateAssetRequest, db: Session = Depends(get_db), current
 def resolve_qr(
     token: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("assets", "view", ("cmms", "view"))),
 ):
     """Resolve a scanned QR sticker to its asset + the WO to jump into (Tier 5.2).
 
@@ -147,7 +147,7 @@ def resolve_qr(
 
 
 @router.get("/{asset_id}", response_model=AssetResponse)
-def get_asset(asset_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(get_current_user)):
+def get_asset(asset_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(require_permission("assets", "view", ("cmms", "view")))):
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -156,7 +156,7 @@ def get_asset(asset_id: str, db: Session = Depends(get_db), current_user: UserRe
 
 
 @router.patch("/{asset_id}", response_model=AssetResponse)
-def update_asset(asset_id: str, req: UpdateAssetRequest, db: Session = Depends(get_db), current_user: UserResponse = Depends(require_roles("manager", "admin"))):
+def update_asset(asset_id: str, req: UpdateAssetRequest, db: Session = Depends(get_db), current_user: UserResponse = Depends(require_permission("assets", "manage"))):
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -198,7 +198,7 @@ def update_asset(asset_id: str, req: UpdateAssetRequest, db: Session = Depends(g
 
 
 @router.delete("/{asset_id}", status_code=204)
-def delete_asset(asset_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(require_roles("manager", "admin"))):
+def delete_asset(asset_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(require_permission("assets", "manage"))):
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -219,7 +219,7 @@ def get_asset_history(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("assets", "view", ("cmms", "view"))),
 ):
     """Return paginated work orders for an asset, newest first."""
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
@@ -251,7 +251,7 @@ def get_asset_history(
 def get_asset_summary(
     asset_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("assets", "view", ("cmms", "view"))),
 ):
     """Return aggregate maintenance stats for an asset."""
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
@@ -309,7 +309,7 @@ def list_meter_readings(
     asset_id: str,
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("assets", "view", ("cmms", "view"))),
 ):
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
@@ -330,7 +330,7 @@ def create_meter_reading(
     asset_id: str,
     req: CreateMeterReadingRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("assets", "view", ("cmms", "view"))),
 ):
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:

@@ -32,8 +32,9 @@ from app.services import parts_service as parts_svc
 from app.services import vendor_maintenance_service as vendor_svc
 from app.services import work_order_service as svc
 from app.services.audit_service import write_audit
+from app.services.notification_service import notify_work_order_assigned
 from app.services.outlet_scope_service import assert_can_access, assert_can_write_outlet, resolve_outlet_id, scoped_query
-from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.auth_service import UserResponse, get_current_user, require_permission
 from app.services.work_order_service import InvalidTransitionError
 
 router = APIRouter(prefix="/api/work-orders", tags=["cmms"])
@@ -92,7 +93,7 @@ def list_work_orders(
     status: Optional[str] = Query(None),
     outlet: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
 ):
     query = scoped_query(db, WorkOrder, current_user)
     if asset_id:
@@ -110,7 +111,7 @@ def list_work_orders(
 def create_work_order(
     req: CreateWorkOrderRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     asset = db.query(Asset).filter(Asset.id == req.assetId).first()
     if not asset:
@@ -137,6 +138,7 @@ def create_work_order(
     )
     db.add(wo)
     db.flush()
+    notify_work_order_assigned(db, wo)
     write_audit(db, table_name="work_orders", record_id=str(wo.id), action="create",
                 new_value={"number": wo.number, "asset": wo.asset_name, "outlet": wo.outlet})
     db.commit()
@@ -148,7 +150,7 @@ def create_work_order(
 def get_work_order(
     wo_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
 ):
     """Return full work order detail including checklist and attachments."""
     wo = _get_wo_or_404(db, wo_id, current_user)
@@ -160,15 +162,16 @@ def update_work_order(
     wo_id: str,
     req: UpdateWorkOrderRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     wo = _get_wo_or_404(db, wo_id, current_user)
     old_status = wo.status.value if hasattr(wo.status, "value") else str(wo.status)
 
     if req.status is not None:
         wo.status = req.status
-    if req.assignee is not None:
+    if req.assignee is not None and req.assignee != wo.assignee:
         wo.assignee = req.assignee
+        notify_work_order_assigned(db, wo)
     if req.priority is not None:
         wo.priority = req.priority
     if req.scheduledDate is not None:
@@ -189,7 +192,7 @@ def update_work_order(
 def delete_work_order(
     wo_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     wo = _get_wo_or_404(db, wo_id, current_user)
     write_audit(db, table_name="work_orders", record_id=str(wo.id), action="delete",
@@ -207,7 +210,7 @@ def transition_work_order(
     wo_id: str,
     req: WorkOrderTransitionRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     """Transition a work order to a new status via the explicit state machine.
 
@@ -243,7 +246,7 @@ def add_checklist_item(
     req: ChecklistItemCreate,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
     idempotency_key: Optional[str] = Header(None),
 ):
     cached = idempotency_service.get_cached(db, idempotency_key, current_user.id, request)
@@ -270,7 +273,7 @@ def toggle_checklist_item(
     item_id: str,
     req: ChecklistItemUpdate,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
 ):
     """Toggle a checklist item done/undone. Any authenticated user can check off items."""
     _get_wo_or_404(db, wo_id, current_user)   # validates WO exists
@@ -302,7 +305,7 @@ def update_cost(
     wo_id: str,
     req: WorkOrderCostUpdate,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     wo = _get_wo_or_404(db, wo_id, current_user)
     wo = svc.update_wo_cost(db, wo, req)
@@ -318,7 +321,7 @@ def add_attachment(
     wo_id: str,
     req: WorkOrderAttachmentCreate,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
 ):
     """Attach an external URL to a work order (kept for documents / links).
     For technician photos use POST /{wo_id}/attachments/upload."""
@@ -334,7 +337,7 @@ def upload_attachment(
     file: UploadFile = File(...),
     caption: Optional[str] = Form(None),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
     idempotency_key: Optional[str] = Header(None),
 ):
     """Upload a real photo taken in the field (Tier 5.1).
@@ -385,7 +388,7 @@ def serve_attachment(
     wo_id: str,
     att_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
 ):
     att = _get_attachment_or_404(db, wo_id, att_id, current_user)
     if not att.storage_key:
@@ -401,7 +404,7 @@ def serve_thumbnail(
     wo_id: str,
     att_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
 ):
     att = _get_attachment_or_404(db, wo_id, att_id, current_user)
     key = att.thumbnail_key or att.storage_key
@@ -423,7 +426,7 @@ def serve_thumbnail(
 def list_wo_parts(
     wo_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
 ):
     wo = _get_wo_or_404(db, wo_id, current_user)
     return [parts_svc.wo_part_to_response(wp) for wp in (wo.parts_used or [])]
@@ -435,7 +438,7 @@ def consume_wo_part(
     req: ConsumePartRequest,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
     idempotency_key: Optional[str] = Header(None),
 ):
     # Consuming a part decrements stock — a retried offline request must not
@@ -468,7 +471,7 @@ def assign_vendor(
     wo_id: str,
     req: AssignVendorRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     from datetime import date as _date
     wo = _get_wo_or_404(db, wo_id, current_user)

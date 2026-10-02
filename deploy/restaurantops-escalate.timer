@@ -1,0 +1,16 @@
+[Unit]
+Description=RestaurantOps — escalate stale approvals hourly
+Documentation=file:///opt/restaurantops/DOC.md
+
+[Timer]
+# Hourly. Escalation is idempotent: a request is escalated once per stuck step.
+OnCalendar=hourly
+RandomizedDelaySec=120
+
+# If the machine was off, run once as soon as it is back up.
+Persistent=true
+
+Unit=restaurantops-escalate.service
+
+[Install]
+WantedBy=timers.target

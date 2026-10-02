@@ -25,6 +25,11 @@ from app.services import parts_service
 from app.services.audit_service import write_audit
 from app.services.outlet_scope_service import resolve_outlet_id
 
+# Every status a PR / PO can take (String columns — kept in sync with the
+# frontend PurchaseRequestStatus / PurchaseOrderStatus by check_enum_parity).
+PR_STATUSES = ("pending_approval", "approved", "rejected", "ordered", "received", "cancelled")
+PO_STATUSES = ("sent", "partially_received", "received", "cancelled")
+
 # PR statuses that still "hold" a part — used to avoid duplicate auto-PRs.
 _OPEN_PR_STATUSES = ("pending_approval", "approved", "ordered")
 

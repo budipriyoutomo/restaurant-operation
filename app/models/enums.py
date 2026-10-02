@@ -30,6 +30,7 @@ class IssueStatusEnum(str, enum.Enum):
     waiting = "waiting"
     resolved = "resolved"
     closed = "closed"
+    cancelled = "cancelled"   # Todo-Pilot §2 — only via POST /api/issues/{id}/cancel
 
 
 class TaskStatusEnum(str, enum.Enum):
@@ -40,6 +41,7 @@ class TaskStatusEnum(str, enum.Enum):
     waiting = "waiting"
     resolved = "resolved"
     closed = "closed"
+    cancelled = "cancelled"   # set when the parent Issue is cancelled
 
 
 class ApprovalTypeEnum(str, enum.Enum):

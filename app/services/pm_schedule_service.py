@@ -26,6 +26,7 @@ from app.models.meter_reading import MeterReading
 from app.models.pm_schedule import PMSchedule
 from app.schemas.pm_schedule import PMScheduleResponse
 from app.services.audit_service import write_audit
+from app.services.notification_service import notify_work_order_assigned
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +219,7 @@ def _spawn_pm_wo(db: Session, sched: PMSchedule, period_key: str,
     )
     db.add(wo)
     db.flush()  # need wo.id for checklist items
+    notify_work_order_assigned(db, wo)
 
     for idx, title in enumerate(sched.checklist or []):
         db.add(WorkOrderChecklistItem(work_order_id=wo.id, title=str(title), order_index=idx))

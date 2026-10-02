@@ -92,13 +92,13 @@ def _po_spend(db: Session, outlet_id, start: date, end: date) -> int:
 
 def compute_budget_status(db: Session, period: str, user=None) -> list[dict]:
     """Per-outlet budget vs spend for a month. Only outlets that have a budget
-    for the period are returned. Outlet-scoped when `user` is a non-admin."""
-    from app.services.outlet_scope_service import is_admin, user_outlet_ids
+    for the period are returned. Outlet-scoped when `user` lacks all-outlet access."""
+    from app.services.outlet_scope_service import allowed_outlet_ids
 
     start, end = _period_bounds(period)
     q = db.query(Budget).filter(Budget.period == period)
-    if user is not None and not is_admin(user):
-        allowed = user_outlet_ids(db, user)
+    allowed = allowed_outlet_ids(db, user) if user is not None else None
+    if allowed is not None:
         if not allowed:
             return []
         q = q.filter(Budget.outlet_id.in_(allowed))

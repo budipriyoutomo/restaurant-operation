@@ -17,8 +17,22 @@ from app.models.procurement import (
     ProcurementNumberSequence,
 )
 from app.models.budget import Budget
+from app.models.role import Role, role_outlets
+from app.models.user import User, user_outlets
+from app.models.whatsapp import WhatsAppMessage
+from app.models.guest_case import GuestCase
+from app.models.training_enrollment import TrainingEnrollment
+from app.models.qa_audit import (
+    QAAuditTemplate, QAAuditTemplateItem, QAAuditNumberSequence,
+    QAAuditSession, QAAuditFinding, QAAuditPhoto,
+)
 
 __all__ = [
+    "WhatsAppMessage",
+    "GuestCase",
+    "TrainingEnrollment",
+    "QAAuditTemplate", "QAAuditTemplateItem", "QAAuditNumberSequence",
+    "QAAuditSession", "QAAuditFinding", "QAAuditPhoto",
     "Issue", "IssueNumberSequence",
     "Task", "TaskNumberSequence",
     "ApprovalRequest", "ApprovalNumberSequence",
@@ -37,4 +51,6 @@ __all__ = [
     "GoodsReceipt", "GoodsReceiptItem",
     "ProcurementNumberSequence",
     "Budget",
+    "Role", "role_outlets",
+    "User", "user_outlets",
 ]

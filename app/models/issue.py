@@ -51,6 +51,14 @@ class Issue(Base):
         uselist=False,
         lazy="selectin",
     )
+    # Guest side of a "Guest Service" issue (Todo-Pilot §8); None for other categories.
+    guest_case = relationship(
+        "GuestCase",
+        back_populates="issue",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+    )
     # Read-only link to auto-generated work orders (WorkOrder.issue_id → SET NULL on delete,
     # so no cascade here). Enables IssueResponse.workOrderId to be populated.
     work_orders = relationship(

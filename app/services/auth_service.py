@@ -6,7 +6,7 @@ on routes that want user context but don't require it.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -15,8 +15,10 @@ from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app import permissions as perm
 from app.config import settings
 from app.database import get_db
+from app.models.role import Role
 from app.models.user import User
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -37,10 +39,15 @@ class UserResponse(BaseModel):
     name: str
     role: str
     is_active: bool
-    # Outlets this user is scoped to (Tier 4.1). Empty for admins — they see all
-    # outlets — and for users not yet assigned, which Tier 4.2 treats as
-    # deny-by-default for non-admins.
+    # Personal outlet override (user_outlets). Empty = inherit the role's access.
     outlet_ids: List[str] = []
+    # Resolved from the role (migration 031) — what the UI should honour.
+    role_name: str = ""
+    approval_tier: str = "staff"            # approver_role used in approval workflows
+    permissions: Dict[str, str] = {}        # module key -> none | view | manage
+    all_outlets: bool = False               # True = every outlet
+    effective_outlet_ids: List[str] = []    # outlets visible when all_outlets is False
+    whatsapp_number: Optional[str] = None   # normalised, e.g. 6281234567890 (Todo-Pilot §4)
 
 
 class RegisterRequest(BaseModel):
@@ -62,6 +69,8 @@ class UpdateUserRequest(BaseModel):
     # Replaces the user's outlet assignment wholesale (Tier 4.1).
     # None = leave unchanged; [] = explicitly clear all outlets.
     outlet_ids: Optional[List[str]] = None
+    # None = leave unchanged; "" = remove the number (Todo-Pilot §4).
+    whatsapp_number: Optional[str] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -87,11 +96,40 @@ def _decode_token(token: str) -> dict:
         return {}
 
 
+def role_permissions(role: Optional[Role]) -> Dict[str, str]:
+    """Module→level map for a role. The superuser role always gets everything,
+    whatever is stored, so a bad edit can never lock admins out."""
+    if role is None:
+        return perm.normalize({})
+    if role.key == perm.SUPERUSER_ROLE:
+        return perm.full_access()
+    return perm.normalize(role.permissions)
+
+
 def _user_to_response(u: User) -> UserResponse:
+    role = u.role_obj
+    override = [str(o.id) for o in (u.outlets or [])]
+    if override:
+        all_outlets, effective = False, override
+    elif role is not None and role.all_outlets:
+        all_outlets, effective = True, []
+    else:
+        all_outlets = False
+        effective = [str(o.id) for o in (role.outlets if role else []) if o.deleted_at is None]
     return UserResponse(
         id=str(u.id), email=u.email, name=u.name, role=u.role, is_active=u.is_active,
-        outlet_ids=[str(o.id) for o in (u.outlets or [])],
+        outlet_ids=override,
+        role_name=role.name if role else u.role,
+        approval_tier=role.approval_tier if role else "staff",
+        permissions=role_permissions(role),
+        all_outlets=all_outlets,
+        effective_outlet_ids=effective,
+        whatsapp_number=u.whatsapp_number,
     )
+
+
+def has_permission(user: UserResponse, module: str, level: str = perm.VIEW) -> bool:
+    return perm.rank(user.permissions.get(module, perm.NONE)) >= perm.rank(level)
 
 
 # ── FastAPI dependencies ──────────────────────────────────────────────────────
@@ -113,21 +151,35 @@ def get_current_user(
     return _user_to_response(user)
 
 
-def require_roles(*allowed: str):
-    """Return a dependency that requires the caller to have one of the given roles.
+def require_permission(module: str, level: str = perm.VIEW, *alternatives: tuple):
+    """Return a dependency requiring the caller's role to grant `level` on `module`.
+
+    Extra (module, level) pairs are alternatives — any one suffices. Used for
+    shared reads, e.g. the asset list is needed by both Assets and CMMS.
 
     Usage:
-        _: UserResponse = Depends(require_roles("admin"))
-        _: UserResponse = Depends(require_roles("manager", "admin"))
+        _: UserResponse = Depends(require_permission("assets", "manage"))
+        _: UserResponse = Depends(require_permission("assets", "view", ("cmms", "view")))
     """
+    checks = [(module, level), *alternatives]
+    for m, lv in checks:
+        if m not in perm.MODULE_KEYS or lv not in perm.LEVELS:
+            raise ValueError(f"Unknown permission {m}:{lv}")   # fail at import, not at request
+
     def _check(current: UserResponse = Depends(get_current_user)) -> UserResponse:
-        if current.role not in allowed:
+        if not any(has_permission(current, m, lv) for m, lv in checks):
+            wanted = " or ".join(f"{m}:{lv}" for m, lv in checks)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Requires role: {' or '.join(allowed)}",
+                detail=f"Requires permission: {wanted}",
             )
         return current
     return _check
+
+
+def _require_role_exists(db: Session, key: str) -> None:
+    if db.query(Role).filter(Role.key == key).first() is None:
+        raise HTTPException(status_code=422, detail=f"Unknown role '{key}'")
 
 
 def get_optional_user(
@@ -150,6 +202,7 @@ def get_optional_user(
 def register_user(db: Session, req: RegisterRequest) -> UserResponse:
     if db.query(User).filter(User.email == req.email).first():
         raise HTTPException(status_code=409, detail=f"Email '{req.email}' already registered")
+    _require_role_exists(db, req.role)
     user = User(
         email=req.email,
         name=req.name,
@@ -169,9 +222,9 @@ def update_user(db: Session, user_id: str, req: UpdateUserRequest, caller_id: st
     if req.name is not None:
         user.name = req.name
     if req.role is not None:
-        allowed_roles = {"staff", "manager", "admin"}
-        if req.role not in allowed_roles:
-            raise HTTPException(status_code=422, detail=f"Invalid role. Must be one of: {', '.join(allowed_roles)}")
+        _require_role_exists(db, req.role)
+        if str(user.id) == caller_id and req.role != user.role:
+            raise HTTPException(status_code=400, detail="Cannot change your own role")
         user.role = req.role
     if req.is_active is not None:
         if not req.is_active and str(user.id) == caller_id:
@@ -179,9 +232,20 @@ def update_user(db: Session, user_id: str, req: UpdateUserRequest, caller_id: st
         user.is_active = req.is_active
     if req.outlet_ids is not None:
         user.outlets = _resolve_outlets(db, req.outlet_ids)
+    if req.whatsapp_number is not None:
+        user.whatsapp_number = parse_whatsapp_number(req.whatsapp_number)
     db.commit()
     db.refresh(user)
     return _user_to_response(user)
+
+
+def parse_whatsapp_number(raw: str) -> Optional[str]:
+    """Normalise a number from the UI; 422 with the reason when it is not valid."""
+    from app.services.whatsapp_service import normalize_phone
+    try:
+        return normalize_phone(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 def _resolve_outlets(db: Session, outlet_ids: List[str]) -> list:

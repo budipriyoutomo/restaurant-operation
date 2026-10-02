@@ -16,7 +16,7 @@ from app.schemas.approval_policy import (
 from app.services import approval_policy_service as policy_svc
 from app.services.audit_service import write_audit
 from app.services.outlet_scope_service import resolve_outlet_id
-from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.auth_service import UserResponse, get_current_user, require_permission
 
 router = APIRouter(prefix="/api/approval-policies", tags=["approvals"])
 
@@ -63,7 +63,7 @@ def list_policies(
 def create_policy(
     req: CreateApprovalPolicyRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("admin")),
+    _: UserResponse = Depends(require_permission("master-data", "manage")),
 ):
     _validate(req.approvalType, req.steps, req.minAmount, req.maxAmount)
     policy = ApprovalPolicy(
@@ -105,7 +105,7 @@ def update_policy(
     policy_id: str,
     req: UpdateApprovalPolicyRequest,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("admin")),
+    _: UserResponse = Depends(require_permission("master-data", "manage")),
 ):
     policy = (
         db.query(ApprovalPolicy)
@@ -153,7 +153,7 @@ def update_policy(
 def delete_policy(
     policy_id: str,
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_roles("admin")),
+    _: UserResponse = Depends(require_permission("master-data", "manage")),
 ):
     policy = (
         db.query(ApprovalPolicy)

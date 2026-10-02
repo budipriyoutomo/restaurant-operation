@@ -10,7 +10,7 @@ from slowapi.util import get_remote_address
 from app.config import settings
 from app.routers import issues, tasks, approvals, outlets, categories, pics, analytics, auth, audit_logs
 from app.routers import assets, work_orders, notifications, vendors, training_programs, campaigns
-from app.routers import pm_schedules, approval_policies, parts, procurement, budgets
+from app.routers import pm_schedules, approval_policies, parts, procurement, budgets, roles, qa_audits, guest_cases
 
 limiter = Limiter(key_func=get_remote_address, default_limits=[settings.RATE_LIMIT_DEFAULT])
 
@@ -77,6 +77,10 @@ app.include_router(parts.router)
 app.include_router(procurement.pr_router)
 app.include_router(procurement.po_router)
 app.include_router(budgets.router)
+app.include_router(roles.router)
+app.include_router(qa_audits.templates_router)
+app.include_router(qa_audits.router)
+app.include_router(guest_cases.router)
 
 
 @app.get("/health")

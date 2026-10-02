@@ -13,7 +13,7 @@ from app.services import parts_service as parts_svc
 from app.services import procurement_service
 from app.services.audit_service import write_audit
 from app.services.outlet_scope_service import assert_can_access, resolve_outlet_id, scoped_query
-from app.services.auth_service import UserResponse, get_current_user, require_roles
+from app.services.auth_service import UserResponse, get_current_user, require_permission
 
 router = APIRouter(prefix="/api/parts", tags=["cmms"])
 
@@ -24,7 +24,7 @@ def list_parts(
     low_stock: bool = Query(False),
     active_only: bool = Query(True),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("procurement", "view"))),
 ):
     q = scoped_query(db, Part, current_user).filter(Part.deleted_at.is_(None))
     if active_only:
@@ -42,7 +42,7 @@ def list_parts(
 def create_part(
     req: CreatePartRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     if db.query(Part).filter(Part.sku == req.sku, Part.deleted_at.is_(None)).first():
         raise HTTPException(status_code=409, detail=f"SKU '{req.sku}' already exists")
@@ -61,7 +61,7 @@ def create_part(
 
 
 @router.get("/{part_id}", response_model=PartResponse)
-def get_part(part_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(get_current_user)):
+def get_part(part_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(require_permission("cmms", "view", ("procurement", "view")))):
     part = db.query(Part).filter(Part.id == part_id, Part.deleted_at.is_(None)).first()
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
@@ -73,7 +73,7 @@ def get_part(part_id: str, db: Session = Depends(get_db), current_user: UserResp
 def get_part_price_history(
     part_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(require_permission("cmms", "view", ("procurement", "view"))),
 ):
     """Per-vendor price/order history for a part (Tier 6.2)."""
     part = db.query(Part).filter(Part.id == part_id, Part.deleted_at.is_(None)).first()
@@ -88,7 +88,7 @@ def update_part(
     part_id: str,
     req: UpdatePartRequest,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     part = db.query(Part).filter(Part.id == part_id, Part.deleted_at.is_(None)).first()
     if not part:
@@ -114,7 +114,7 @@ def update_part(
 def delete_part(
     part_id: str,
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_roles("manager", "admin")),
+    current_user: UserResponse = Depends(require_permission("cmms", "manage")),
 ):
     part = db.query(Part).filter(Part.id == part_id, Part.deleted_at.is_(None)).first()
     if not part:
