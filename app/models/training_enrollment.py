@@ -6,10 +6,11 @@ from sqlalchemy import CheckConstraint, Column, ForeignKey, Integer, String, Tex
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
-class TrainingEnrollment(Base):
+class TrainingEnrollment(TenantScoped, Base):
     __tablename__ = "training_enrollments"
     __table_args__ = (
         UniqueConstraint("program_id", "user_id", name="uq_training_enrollment"),

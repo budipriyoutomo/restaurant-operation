@@ -1,9 +1,10 @@
 import uuid
-from sqlalchemy import ForeignKey, Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP
+from sqlalchemy import ForeignKey, Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped, company_key_column
 from app.database import Base
 from app.models.enums import IssueCategoryEnum, PriorityEnum, IssueStatusEnum
 
@@ -19,11 +20,12 @@ def _sa_enum(py_enum, pg_name):
     )
 
 
-class Issue(Base):
+class Issue(TenantScoped, Base):
     __tablename__ = "issues"
+    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_issues_company_number"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    number = Column(String(30), nullable=False, unique=True)     # ISS-2026-00001
+    number = Column(String(30), nullable=False)     # ISS-2026-00001
     title = Column(String(500), nullable=False)
     description = Column(Text, default="")
     outlet = Column(String(200), nullable=False)
@@ -69,8 +71,9 @@ class Issue(Base):
     )
 
 
-class IssueNumberSequence(Base):
+class IssueNumberSequence(TenantScoped, Base):
     __tablename__ = "issue_number_sequences"
 
+    company_id = company_key_column()
     year = Column(Integer, primary_key=True)
     last_seq = Column(Integer, nullable=False, default=0)

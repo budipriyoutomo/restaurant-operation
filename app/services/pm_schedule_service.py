@@ -120,20 +120,8 @@ def meter_due(latest_value: Optional[int], last_meter_value: Optional[int], mete
 # ---------------------------------------------------------------------------
 
 def _next_wo_number(db: Session) -> str:
-    from sqlalchemy import text
-    year = datetime.now().year
-    result = db.execute(
-        text("""
-            INSERT INTO work_order_number_sequences (year, last_seq)
-            VALUES (:year, 1)
-            ON CONFLICT (year) DO UPDATE
-              SET last_seq = work_order_number_sequences.last_seq + 1
-            RETURNING last_seq
-        """),
-        {"year": year},
-    )
-    seq = result.scalar_one()
-    return f"WO-{year}-{seq:05d}"
+    from app.services.numbering import next_number
+    return next_number(db, "WO", "work_order_number_sequences")
 
 
 def _resolve_assignee(sched: PMSchedule) -> str:

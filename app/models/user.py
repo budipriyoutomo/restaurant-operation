@@ -1,9 +1,10 @@
 import uuid
-from sqlalchemy import Column, ForeignKey, String, Boolean, TIMESTAMP, Table
+from sqlalchemy import Column, ForeignKey, ForeignKeyConstraint, String, Boolean, TIMESTAMP, Table
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
@@ -18,16 +19,26 @@ user_outlets = Table(
 )
 
 
-class User(Base):
+class User(TenantScoped, Base):
     __tablename__ = "users"
+    # The role key is resolved within the user's own company (migration 040).
+    __table_args__ = (
+        ForeignKeyConstraint(["company_id", "role"], ["roles.company_id", "roles.key"],
+                             onupdate="CASCADE", name="fk_users_company_role"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # NULL only for platform admins, who belong to no company (Todo-Pilot §11).
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="RESTRICT"), nullable=True, index=True)
+    # Email is unique across the platform: one account = one company.
     email = Column(String(200), nullable=False, unique=True)
     name = Column(String(200), nullable=False)
     password_hash = Column(String(255), nullable=False)
     # Key of a row in `roles` (migration 031) — staff/manager/admin or a custom role.
-    role = Column(String(50), ForeignKey("roles.key", onupdate="CASCADE"), nullable=False, default="staff")
+    role = Column(String(50), nullable=False, default="staff")
     is_active = Column(Boolean, nullable=False, default=True)
+    # SaaS operator: manages companies only, never sees company data.
+    is_platform_admin = Column(Boolean, nullable=False, default=False, server_default="false")
     preferences = Column(JSONB, nullable=False, default=dict)
     # Digits with country code, e.g. 6281234567890 (Todo-Pilot §4). NULL = none.
     whatsapp_number = Column(String(20), nullable=True)
@@ -38,4 +49,8 @@ class User(Base):
     # the role's default. Empty = inherit the role's outlet access (see
     # outlet_scope_service.allowed_outlet_ids).
     outlets = relationship("Outlet", secondary=user_outlets, lazy="selectin")
-    role_obj = relationship("Role", lazy="joined")
+    company = relationship("Company", lazy="joined")      # global table: never tenant-filtered
+    role_obj = relationship(
+        "Role", lazy="joined", viewonly=True,
+        primaryjoin="and_(Role.company_id == foreign(User.company_id), Role.key == foreign(User.role))",
+    )

@@ -4,10 +4,11 @@ from sqlalchemy import Column, ForeignKey, Integer, String, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
-class IdempotencyKey(Base):
+class IdempotencyKey(TenantScoped, Base):
     """A stored response, keyed by (client-supplied key, user), so a retried
     mutation returns the original result instead of running twice (Tier 5.3)."""
 

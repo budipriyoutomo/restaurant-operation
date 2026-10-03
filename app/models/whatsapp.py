@@ -4,10 +4,11 @@ from sqlalchemy import CheckConstraint, Column, ForeignKey, Index, Integer, Stri
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
-class WhatsAppMessage(Base):
+class WhatsAppMessage(TenantScoped, Base):
     """One outgoing WhatsApp message (Todo-Pilot §4, migration 035).
 
     status: pending → sent | failed (after WHATSAPP_MAX_ATTEMPTS) — or skipped

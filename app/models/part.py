@@ -1,20 +1,22 @@
 import uuid
 
-from sqlalchemy import BigInteger, Boolean, Column, Integer, String, TIMESTAMP, ForeignKey
+from sqlalchemy import BigInteger, Boolean, Column, Integer, String, TIMESTAMP, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
-class Part(Base):
+class Part(TenantScoped, Base):
     """Inventory master for a spare part."""
 
     __tablename__ = "parts"
+    __table_args__ = (UniqueConstraint("company_id", "sku", name="uq_parts_company_sku"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    sku = Column(String(60), nullable=False, unique=True)
+    sku = Column(String(60), nullable=False)
     name = Column(String(300), nullable=False)
     category = Column(String(100), nullable=False, default="General")
     unit = Column(String(20), nullable=False, default="pcs")
@@ -31,7 +33,7 @@ class Part(Base):
     deleted_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
 
-class WorkOrderPart(Base):
+class WorkOrderPart(TenantScoped, Base):
     """A quantity of a part consumed by a work order (decrements stock)."""
 
     __tablename__ = "work_order_parts"

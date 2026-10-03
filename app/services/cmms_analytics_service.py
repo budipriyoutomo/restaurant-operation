@@ -15,6 +15,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.asset import Asset, WorkOrder
+from app.services.outlet_scope_service import scoped_query
 from app.services.work_order_service import compute_downtime_hours
 
 # Repair cost ≥ this fraction of purchase cost → flag repair-vs-replace.
@@ -92,10 +93,10 @@ def _asset_start(asset: Asset, wos: List[WorkOrder], now: datetime) -> datetime:
 
 
 def compute_fleet_analytics(db: Session, outlet: Optional[str] = None,
-                            ratio: float = REPAIR_REPLACE_RATIO) -> dict:
+                            ratio: float = REPAIR_REPLACE_RATIO, user=None) -> dict:
     """Return {'perAsset': [...], 'fleet': {...}} for all assets (optionally
-    filtered by outlet)."""
-    q = db.query(Asset)
+    filtered by outlet). With `user`, only assets in that user's outlets."""
+    q = scoped_query(db, Asset, user) if user is not None else db.query(Asset)
     if outlet:
         q = q.filter(Asset.outlet == outlet)
     assets = q.order_by(Asset.name).all()

@@ -3,10 +3,11 @@ from sqlalchemy import Column, String, Text, TIMESTAMP, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
-class Notification(Base):
+class Notification(TenantScoped, Base):
     __tablename__ = "notifications"
 
     id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

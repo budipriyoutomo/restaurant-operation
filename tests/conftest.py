@@ -152,8 +152,23 @@ TEST_OUTLETS = [
 ]
 
 
+@pytest.fixture()
+def test_company(db):
+    """The company every test runs as (Todo-Pilot §11). Business rows need a
+    company in context — the ORM refuses them otherwise."""
+    from app.core.tenancy import bypass_tenant, set_tenant
+    from app.models.company import Company
+
+    with bypass_tenant(db):
+        company = Company(name="Test Company", slug="test-company")
+        db.add(company)
+        db.flush()
+    set_tenant(db, company.id)
+    return company
+
+
 @pytest.fixture(autouse=True)
-def seed_outlets(db):
+def seed_outlets(db, test_company):
     """Ensure the outlets referenced by tests exist in master data, along with
     the default roles (users.role is a FK to roles since migration 031)."""
     from app.models.outlet import Outlet

@@ -1,8 +1,11 @@
-from sqlalchemy import Boolean, Column, ForeignKey, String, Table, TIMESTAMP
+import uuid
+
+from sqlalchemy import Boolean, Column, ForeignKey, String, Table, TIMESTAMP, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
@@ -11,13 +14,13 @@ from app.database import Base
 role_outlets = Table(
     "role_outlets",
     Base.metadata,
-    Column("role_key", String(50), ForeignKey("roles.key", ondelete="CASCADE", onupdate="CASCADE"), primary_key=True),
+    Column("role_id", UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
     Column("outlet_id", UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="CASCADE"), primary_key=True),
     Column("created_at", TIMESTAMP(timezone=True), server_default=func.now(), nullable=False),
 )
 
 
-class Role(Base):
+class Role(TenantScoped, Base):
     """A configurable role: which modules it may use and which outlets' data it sees.
 
     `key` is the stable identifier stored in users.role (and the JWT); `name`
@@ -25,8 +28,11 @@ class Role(Base):
     """
 
     __tablename__ = "roles"
+    # Keys are per company (migration 040): every company has its own admin/manager/staff.
+    __table_args__ = (UniqueConstraint("company_id", "key", name="uq_roles_company_key"),)
 
-    key = Column(String(50), primary_key=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key = Column(String(50), nullable=False)
     name = Column(String(100), nullable=False)
     description = Column(String(500), nullable=True)
     # module key -> none | view | manage (see app/permissions.py)

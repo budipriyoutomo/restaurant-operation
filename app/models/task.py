@@ -1,9 +1,10 @@
 import uuid
-from sqlalchemy import Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP, ForeignKey
+from sqlalchemy import Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped, company_key_column
 from app.database import Base
 from app.models.enums import PriorityEnum, TaskStatusEnum
 
@@ -17,13 +18,14 @@ def _sa_enum(py_enum, pg_name):
     )
 
 
-class Task(Base):
+class Task(TenantScoped, Base):
     __tablename__ = "tasks"
+    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_tasks_company_number"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     issue_id = Column(UUID(as_uuid=True), ForeignKey("issues.id", ondelete="CASCADE"), nullable=False)
     issue_number = Column(String(30), nullable=False)       # denormalized (FR-10)
-    number = Column(String(30), nullable=False, unique=True)  # TSK-2026-00001
+    number = Column(String(30), nullable=False)  # TSK-2026-00001
     title = Column(String(500), nullable=False)
     description = Column(Text, default="")
     status = Column(_sa_enum(TaskStatusEnum, "task_status"), nullable=False, default=TaskStatusEnum.open)
@@ -40,8 +42,9 @@ class Task(Base):
     issue = relationship("Issue", back_populates="tasks")
 
 
-class TaskNumberSequence(Base):
+class TaskNumberSequence(TenantScoped, Base):
     __tablename__ = "task_number_sequences"
 
+    company_id = company_key_column()
     year = Column(Integer, primary_key=True)
     last_seq = Column(Integer, nullable=False, default=0)

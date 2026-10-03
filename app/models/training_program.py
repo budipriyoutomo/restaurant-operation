@@ -4,10 +4,11 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
-class TrainingProgram(Base):
+class TrainingProgram(TenantScoped, Base):
     __tablename__ = "training_programs"
 
     id               = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

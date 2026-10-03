@@ -42,26 +42,9 @@ from app.services.work_order_service import get_approval_threshold, needs_approv
 # ---------------------------------------------------------------------------
 
 def _next_number(db: Session, prefix: str, table: str) -> str:
-    """Atomically increment the per-year sequence and return a formatted number.
-
-    Uses an INSERT … ON CONFLICT … DO UPDATE pattern inside the caller's
-    transaction so concurrent creates never produce the same number.
-    """
-    year = datetime.now().year
-    result = db.execute(
-        text(
-            f"""
-            INSERT INTO {table} (year, last_seq)
-            VALUES (:year, 1)
-            ON CONFLICT (year) DO UPDATE
-              SET last_seq = {table}.last_seq + 1
-            RETURNING last_seq
-            """
-        ),
-        {"year": year},
-    )
-    seq = result.scalar_one()
-    return f"{prefix}-{year}-{seq:05d}"
+    """Per-company document number (see app/services/numbering.py)."""
+    from app.services.numbering import next_number
+    return next_number(db, prefix, table)
 
 
 def _value(v) -> str:
@@ -101,19 +84,8 @@ def _parse_date(date_str: Optional[str]):
 
 
 def _next_wo_number(db: Session) -> str:
-    year = datetime.now().year
-    result = db.execute(
-        text("""
-            INSERT INTO work_order_number_sequences (year, last_seq)
-            VALUES (:year, 1)
-            ON CONFLICT (year) DO UPDATE
-              SET last_seq = work_order_number_sequences.last_seq + 1
-            RETURNING last_seq
-        """),
-        {"year": year},
-    )
-    seq = result.scalar_one()
-    return f"WO-{year}-{seq:05d}"
+    from app.services.numbering import next_number
+    return next_number(db, "WO", "work_order_number_sequences")
 
 
 def _issue_to_response(issue: Issue) -> IssueResponse:

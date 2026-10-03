@@ -1,21 +1,23 @@
 import uuid
 
-from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Text, TIMESTAMP
+from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Text, TIMESTAMP, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped, company_key_column
 from app.database import Base
 
 
-class PurchaseRequest(Base):
+class PurchaseRequest(TenantScoped, Base):
     """A request to buy parts. Raised manually or automatically when stock hits
     the reorder level; approved through the shared approval engine."""
 
     __tablename__ = "purchase_requests"
+    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_purchase_requests_company_number"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    number = Column(String(30), nullable=False, unique=True)       # PR-2026-00001
+    number = Column(String(30), nullable=False)       # PR-2026-00001
     status = Column(String(20), nullable=False, default="pending_approval")
     outlet = Column(String(200), nullable=True)
     outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
@@ -34,7 +36,7 @@ class PurchaseRequest(Base):
                             foreign_keys="ApprovalRequest.purchase_request_id")
 
 
-class PurchaseRequestItem(Base):
+class PurchaseRequestItem(TenantScoped, Base):
     __tablename__ = "purchase_request_items"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -48,11 +50,12 @@ class PurchaseRequestItem(Base):
     request = relationship("PurchaseRequest", back_populates="items")
 
 
-class PurchaseOrder(Base):
+class PurchaseOrder(TenantScoped, Base):
     __tablename__ = "purchase_orders"
+    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_purchase_orders_company_number"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    number = Column(String(30), nullable=False, unique=True)        # PO-2026-00001
+    number = Column(String(30), nullable=False)        # PO-2026-00001
     purchase_request_id = Column(UUID(as_uuid=True), ForeignKey("purchase_requests.id", ondelete="SET NULL"), nullable=True)
     vendor_id = Column(UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="RESTRICT"), nullable=True)
     vendor_name = Column(String(200), nullable=True)
@@ -68,7 +71,7 @@ class PurchaseOrder(Base):
                          cascade="all, delete-orphan", lazy="selectin")
 
 
-class PurchaseOrderItem(Base):
+class PurchaseOrderItem(TenantScoped, Base):
     __tablename__ = "purchase_order_items"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -83,11 +86,12 @@ class PurchaseOrderItem(Base):
     order = relationship("PurchaseOrder", back_populates="items")
 
 
-class GoodsReceipt(Base):
+class GoodsReceipt(TenantScoped, Base):
     __tablename__ = "goods_receipts"
+    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_goods_receipts_company_number"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    number = Column(String(30), nullable=False, unique=True)        # GRN-2026-00001
+    number = Column(String(30), nullable=False)        # GRN-2026-00001
     purchase_order_id = Column(UUID(as_uuid=True), ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False)
     received_by = Column(String(200), nullable=True)
     notes = Column(Text, nullable=True)
@@ -98,7 +102,7 @@ class GoodsReceipt(Base):
                          cascade="all, delete-orphan", lazy="selectin")
 
 
-class GoodsReceiptItem(Base):
+class GoodsReceiptItem(TenantScoped, Base):
     __tablename__ = "goods_receipt_items"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -110,9 +114,10 @@ class GoodsReceiptItem(Base):
     receipt = relationship("GoodsReceipt", back_populates="items")
 
 
-class ProcurementNumberSequence(Base):
+class ProcurementNumberSequence(TenantScoped, Base):
     __tablename__ = "procurement_number_sequences"
 
+    company_id = company_key_column()
     prefix = Column(String(8), primary_key=True)
     year = Column(Integer, primary_key=True)
     last_seq = Column(Integer, nullable=False, default=0)

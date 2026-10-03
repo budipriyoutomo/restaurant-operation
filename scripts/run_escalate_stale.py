@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
+from app.core.tenancy import for_each_company
 from app.database import SessionLocal
 from app.services.approval_service import ESCALATION_THRESHOLD_DAYS, escalate_stale_approvals
 
@@ -34,7 +35,8 @@ def run(db, threshold_days: int = ESCALATION_THRESHOLD_DAYS) -> list:
     Split out from main() so the scheduled behaviour is testable against the
     test database without opening a real application session.
     """
-    return escalate_stale_approvals(db, threshold_days=threshold_days)
+    # Every active company, each in its own context (Todo-Pilot §11).
+    return for_each_company(db, lambda: escalate_stale_approvals(db, threshold_days=threshold_days))
 
 
 def main() -> int:

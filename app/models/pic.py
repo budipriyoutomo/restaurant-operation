@@ -1,8 +1,9 @@
 import uuid
-from sqlalchemy import Column, String, Table, ForeignKey, TIMESTAMP
+from sqlalchemy import Column, String, Table, ForeignKey, TIMESTAMP, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 # Many-to-many junction: one PIC can handle multiple categories
@@ -14,12 +15,13 @@ pic_categories = Table(
 )
 
 
-class PIC(Base):
+class PIC(TenantScoped, Base):
     __tablename__ = "pics"
+    __table_args__ = (UniqueConstraint("company_id", "email", name="uq_pics_company_email"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(200), nullable=False)
-    email = Column(String(200), nullable=False, unique=True)
+    email = Column(String(200), nullable=False)
     phone = Column(String(50), nullable=False)
     department = Column(String(100), nullable=False)
     deleted_at = Column(TIMESTAMP(timezone=True), nullable=True, default=None)

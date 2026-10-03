@@ -35,6 +35,7 @@ import httpx
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
+from app.core.tenancy import bypass_tenant
 from app.config import settings
 from app.models.whatsapp import WhatsAppMessage
 
@@ -262,6 +263,13 @@ def process_due(db: Session, ids=None, limit: int = 100, now: Optional[datetime]
     runner never send the same row twice. Commits once per row.
     Returns counts: {"sent", "retry", "failed"}.
     """
+    # Delivery is platform work across every company's outbox (Todo-Pilot §11):
+    # it only sends what each company already queued.
+    with bypass_tenant(db):
+        return _process_due(db, ids, limit, now)
+
+
+def _process_due(db: Session, ids, limit: int, now: Optional[datetime]) -> dict:
     now = now or _now()
     counts = {"sent": 0, "retry": 0, "failed": 0}
     query = db.query(WhatsAppMessage).filter(

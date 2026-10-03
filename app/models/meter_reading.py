@@ -5,10 +5,11 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
-class MeterReading(Base):
+class MeterReading(TenantScoped, Base):
     """A cumulative usage reading for an asset (e.g. running hours, cycles)."""
 
     __tablename__ = "meter_readings"

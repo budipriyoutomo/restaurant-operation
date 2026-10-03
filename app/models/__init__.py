@@ -1,3 +1,4 @@
+from app.models.company import Company
 from app.models.issue import Issue, IssueNumberSequence
 from app.models.task import Task, TaskNumberSequence
 from app.models.approval import ApprovalRequest, ApprovalNumberSequence
@@ -28,6 +29,7 @@ from app.models.qa_audit import (
 )
 
 __all__ = [
+    "Company",
     "WhatsAppMessage",
     "GuestCase",
     "TrainingEnrollment",

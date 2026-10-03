@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app import permissions as perm
 from app.config import settings
+from app.core.tenancy import bypass_tenant, set_tenant
 from app.database import get_db
 from app.models.role import Role
 from app.models.user import User
@@ -48,6 +49,10 @@ class UserResponse(BaseModel):
     all_outlets: bool = False               # True = every outlet
     effective_outlet_ids: List[str] = []    # outlets visible when all_outlets is False
     whatsapp_number: Optional[str] = None   # normalised, e.g. 6281234567890 (Todo-Pilot §4)
+    # Tenant (Todo-Pilot §11). Platform admins have no company.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
+    is_platform_admin: bool = False
 
 
 class RegisterRequest(BaseModel):
@@ -125,6 +130,9 @@ def _user_to_response(u: User) -> UserResponse:
         all_outlets=all_outlets,
         effective_outlet_ids=effective,
         whatsapp_number=u.whatsapp_number,
+        company_id=str(u.company_id) if u.company_id else None,
+        company_name=u.company.name if u.company else None,
+        is_platform_admin=bool(u.is_platform_admin),
     )
 
 
@@ -134,19 +142,42 @@ def has_permission(user: UserResponse, module: str, level: str = perm.VIEW) -> b
 
 # ── FastAPI dependencies ──────────────────────────────────────────────────────
 
+def _authenticate_request(db: Session, token: Optional[str]) -> Optional[User]:
+    """Resolve the token's user and switch the session to that user's company.
+
+    The user is looked up across companies (the company is not known yet);
+    every query after this runs as the user's company (app/core/tenancy.py).
+    Platform admins get no company, so any company data they touch is refused.
+    Returns None when the token, user or company is not valid.
+    """
+    if not token:
+        return None
+    user_id = _decode_token(token).get("sub")
+    if not user_id:
+        return None
+    with bypass_tenant(db):
+        user = db.query(User).filter(User.id == user_id, User.is_active == True).first()  # noqa: E712
+    if user is None:
+        return None
+    if user.is_platform_admin:
+        set_tenant(db, None)
+        return user
+    if user.company is None or not user.company.is_active:
+        return None
+    set_tenant(db, user.company_id)
+    return user
+
+
 def get_current_user(
     token: Optional[str] = Depends(_oauth2),
     db: Session = Depends(get_db),
 ) -> UserResponse:
-    """Require a valid JWT. Raises 401 if missing or invalid."""
+    """Require a valid JWT. Raises 401 if missing or invalid, or if the user's
+    company has been deactivated."""
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    payload = _decode_token(token)
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
-    if not user:
+    user = _authenticate_request(db, token)
+    if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
     return _user_to_response(user)
 
@@ -187,20 +218,17 @@ def get_optional_user(
     db: Session = Depends(get_db),
 ) -> Optional[UserResponse]:
     """Return user if a valid token is provided, else None. Never raises."""
-    if not token:
-        return None
-    payload = _decode_token(token)
-    user_id = payload.get("sub")
-    if not user_id:
-        return None
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    user = _authenticate_request(db, token)
     return _user_to_response(user) if user else None
 
 
 # ── CRUD ─────────────────────────────────────────────────────────────────────
 
 def register_user(db: Session, req: RegisterRequest) -> UserResponse:
-    if db.query(User).filter(User.email == req.email).first():
+    """Create a user in the caller's company (company_id comes from the context)."""
+    with bypass_tenant(db):                     # email is unique across every company
+        taken = db.query(User).filter(User.email == req.email).first()
+    if taken:
         raise HTTPException(status_code=409, detail=f"Email '{req.email}' already registered")
     _require_role_exists(db, req.role)
     user = User(
@@ -281,9 +309,12 @@ def delete_user(db: Session, user_id: str, caller_id: str) -> None:
 
 
 def login_user(db: Session, req: LoginRequest) -> TokenResponse:
-    user = db.query(User).filter(User.email == req.email, User.is_active == True).first()
+    with bypass_tenant(db):                     # the company is not known before sign-in
+        user = db.query(User).filter(User.email == req.email, User.is_active == True).first()  # noqa: E712
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.is_platform_admin and (user.company is None or not user.company.is_active):
+        raise HTTPException(status_code=403, detail="Your company's account is inactive. Contact support.")
     token = create_access_token(str(user.id), user.email, user.role)
     return TokenResponse(
         access_token=token,

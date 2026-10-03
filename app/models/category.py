@@ -2,6 +2,7 @@ import uuid
 from sqlalchemy import Column, String, Text, Enum as SAEnum, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 from app.models.enums import CategoryTypeEnum
 
@@ -15,7 +16,7 @@ def _sa_enum(py_enum, pg_name):
     )
 
 
-class Category(Base):
+class Category(TenantScoped, Base):
     __tablename__ = "categories"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

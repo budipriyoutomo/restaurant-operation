@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 from app.models.enums import ApproverRoleEnum, PMIntervalTypeEnum, PMTriggerTypeEnum
 
@@ -27,7 +28,7 @@ def _sa_enum(py_enum, pg_name):
     )
 
 
-class PMSchedule(Base):
+class PMSchedule(TenantScoped, Base):
     """A recurring preventive-maintenance definition for a single asset.
 
     The scheduler (`generate_due_preventive_work_orders`) turns due schedules

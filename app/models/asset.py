@@ -1,9 +1,10 @@
 import uuid
-from sqlalchemy import BigInteger, Column, String, Date, Text, Integer, Boolean, Numeric, Enum as SAEnum, TIMESTAMP, ForeignKey
+from sqlalchemy import BigInteger, Column, String, Date, Text, Integer, Boolean, Numeric, Enum as SAEnum, TIMESTAMP, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped, company_key_column
 from app.database import Base
 from app.models.enums import AssetStatusEnum, PriorityEnum, WorkOrderTypeEnum, WorkOrderStatusEnum
 
@@ -17,11 +18,12 @@ def _sa_enum(py_enum, pg_name):
     )
 
 
-class Asset(Base):
+class Asset(TenantScoped, Base):
     __tablename__ = "assets"
+    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_assets_company_number"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    number = Column(String(30), nullable=False, unique=True)      # AST-2026-00001
+    number = Column(String(30), nullable=False)      # AST-2026-00001
     name = Column(String(300), nullable=False)
     category = Column(String(100), nullable=False)                # free-text, e.g. "AC Unit"
     outlet = Column(String(200), nullable=False)                  # denormalized
@@ -49,18 +51,20 @@ class Asset(Base):
     )
 
 
-class AssetNumberSequence(Base):
+class AssetNumberSequence(TenantScoped, Base):
     __tablename__ = "asset_number_sequences"
 
+    company_id = company_key_column()
     year = Column(Integer, primary_key=True)
     last_seq = Column(Integer, nullable=False, default=0)
 
 
-class WorkOrder(Base):
+class WorkOrder(TenantScoped, Base):
     __tablename__ = "work_orders"
+    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_work_orders_company_number"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    number = Column(String(30), nullable=False, unique=True)      # WO-2026-00001
+    number = Column(String(30), nullable=False)      # WO-2026-00001
     type = Column(_sa_enum(WorkOrderTypeEnum, "work_order_type"), nullable=False, default=WorkOrderTypeEnum.corrective)
     asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True)
     asset_name = Column(String(300), nullable=False)              # denormalized for display
@@ -134,7 +138,7 @@ class WorkOrder(Base):
     )
 
 
-class WorkOrderChecklistItem(Base):
+class WorkOrderChecklistItem(TenantScoped, Base):
     __tablename__ = "work_order_checklist_items"
 
     id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -148,7 +152,7 @@ class WorkOrderChecklistItem(Base):
     work_order = relationship("WorkOrder", back_populates="checklist_items")
 
 
-class WorkOrderAttachment(Base):
+class WorkOrderAttachment(TenantScoped, Base):
     __tablename__ = "work_order_attachments"
 
     id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -167,8 +171,9 @@ class WorkOrderAttachment(Base):
     work_order = relationship("WorkOrder", back_populates="attachments")
 
 
-class WorkOrderNumberSequence(Base):
+class WorkOrderNumberSequence(TenantScoped, Base):
     __tablename__ = "work_order_number_sequences"
 
+    company_id = company_key_column()
     year = Column(Integer, primary_key=True)
     last_seq = Column(Integer, nullable=False, default=0)

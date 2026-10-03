@@ -3,10 +3,11 @@ from sqlalchemy import BigInteger, CheckConstraint, Enum as SAEnum, ForeignKey, 
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
-class Campaign(Base):
+class Campaign(TenantScoped, Base):
     __tablename__ = "campaigns"
     __table_args__ = tuple(
         CheckConstraint(f"{c} >= 0", name=f"campaigns_{c}_check")

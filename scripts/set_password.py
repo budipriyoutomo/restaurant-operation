@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from app.core.tenancy import bypass_tenant
 from app.database import SessionLocal
 from app.models.user import User
 from app.services.auth_service import hash_password
@@ -37,12 +38,14 @@ def main() -> int:
 
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.email == args.email).first()
+        with bypass_tenant(db):                 # emails are unique across companies
+            user = db.query(User).filter(User.email == args.email).first()
         if not user:
             print(f"No user with email {args.email!r}", file=sys.stderr)
             return 1
-        user.password_hash = hash_password(new_password)
-        db.commit()
+        with bypass_tenant(db):
+            user.password_hash = hash_password(new_password)
+            db.commit()
         print(f"Password updated for {args.email} (role: {user.role})")
         if not args.password:
             print(f"New password: {new_password}")

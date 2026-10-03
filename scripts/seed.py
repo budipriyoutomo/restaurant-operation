@@ -16,7 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
+from app.core.tenancy import bypass_tenant, set_tenant
 from app.database import SessionLocal
+from app.models.company import Company
+from app.services.role_service import ensure_default_roles
 from app.models.issue import Issue, IssueNumberSequence
 from app.models.task import Task, TaskNumberSequence
 from app.models.approval import ApprovalRequest, ApprovalNumberSequence
@@ -32,6 +35,18 @@ import uuid
 def run():
     db = SessionLocal()
     try:
+        # Seed data belongs to the default company that migration 040 creates
+        # (Todo-Pilot §11); every row below is stamped with it.
+        with bypass_tenant(db):
+            company = db.query(Company).filter(Company.slug == "default").first()
+            if company is None:
+                company = Company(name="Default Company", slug="default")
+                db.add(company)
+                db.commit()
+        set_tenant(db, company.id)
+        ensure_default_roles(db)
+        db.commit()
+
         # ------------------------------------------------------------------
         # Default users for testing
         # ------------------------------------------------------------------

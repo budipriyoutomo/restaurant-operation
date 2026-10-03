@@ -4,15 +4,16 @@ from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, TIMESTAM
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
-class Budget(Base):
+class Budget(TenantScoped, Base):
     """A maintenance budget for one outlet in one month (Tier 6.3). Spend is
     computed from work orders + purchase orders, not stored here."""
 
     __tablename__ = "budgets"
-    __table_args__ = (UniqueConstraint("outlet_id", "period", name="uq_budget_outlet_period"),)
+    __table_args__ = (UniqueConstraint("company_id", "outlet_id", "period", name="uq_budget_outlet_period"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="CASCADE"), nullable=False)

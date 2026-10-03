@@ -27,19 +27,8 @@ router = APIRouter(prefix="/api/assets", tags=["cmms"])
 
 
 def _next_asset_number(db: Session) -> str:
-    year = datetime.now().year
-    result = db.execute(
-        text("""
-            INSERT INTO asset_number_sequences (year, last_seq)
-            VALUES (:year, 1)
-            ON CONFLICT (year) DO UPDATE
-              SET last_seq = asset_number_sequences.last_seq + 1
-            RETURNING last_seq
-        """),
-        {"year": year},
-    )
-    seq = result.scalar_one()
-    return f"AST-{year}-{seq:05d}"
+    from app.services.numbering import next_number
+    return next_number(db, "AST", "asset_number_sequences")
 
 
 def _parse_date(date_str: Optional[str]):

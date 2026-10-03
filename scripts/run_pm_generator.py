@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
+from app.core.tenancy import for_each_company
 from app.database import SessionLocal
 from app.services.pm_schedule_service import generate_due_preventive_work_orders
 
@@ -34,7 +35,8 @@ def run(db) -> list:
     Split out from main() so the scheduled behaviour is testable against the
     test database without opening a real application session.
     """
-    return generate_due_preventive_work_orders(db)
+    # Every active company, each in its own context (Todo-Pilot §11).
+    return for_each_company(db, lambda: generate_due_preventive_work_orders(db))
 
 
 def main() -> int:

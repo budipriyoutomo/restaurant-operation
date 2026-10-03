@@ -11,6 +11,7 @@ from app.models.issue import Issue
 from app.models.task import Task
 from app.services import cmms_analytics_service as cmms_svc
 from app.services.auth_service import UserResponse, get_current_user, require_permission
+from app.services.outlet_scope_service import scoped_query
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -62,8 +63,8 @@ def _sla_breach(due_date, status_value: str) -> bool:
 
 
 @router.get("/summary")
-def get_summary(db: Session = Depends(get_db), _: UserResponse = Depends(require_permission("dashboard", "view", ("analytics", "view")))):
-    issues = db.query(Issue).all()
+def get_summary(db: Session = Depends(get_db), current_user: UserResponse = Depends(require_permission("dashboard", "view", ("analytics", "view")))):
+    issues = scoped_query(db, Issue, current_user).all()
 
     issue_by_status: Dict[str, int] = {}
     issue_by_priority: Dict[str, int] = {}
@@ -85,13 +86,13 @@ def get_summary(db: Session = Depends(get_db), _: UserResponse = Depends(require
         if _sla_breach(issue.due_date, status):
             sla_breach_count += 1
 
-    tasks = db.query(Task).all()
+    tasks = scoped_query(db, Task, current_user).all()
     task_by_status: Dict[str, int] = {}
     for task in tasks:
         status = _val(task.status)
         task_by_status[status] = task_by_status.get(status, 0) + 1
 
-    approvals = db.query(ApprovalRequest).all()
+    approvals = scoped_query(db, ApprovalRequest, current_user).all()
     approval_by_status: Dict[str, int] = {}
     approval_by_type: Dict[str, int] = {}
     for approval in approvals:
@@ -125,7 +126,8 @@ def get_summary(db: Session = Depends(get_db), _: UserResponse = Depends(require
 def get_budget_status(
     period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     db: Session = Depends(get_db),
-    current_user: UserResponse = Depends(require_permission("analytics", "view")),
+    # `budgets` too: the Procurement → Anggaran tab is gated by it (same as GET /api/budgets).
+    current_user: UserResponse = Depends(require_permission("budgets", "view", ("analytics", "view"))),
 ):
     """Budget vs actual spend (WO + PO) per outlet for a month (Tier 6.3),
     outlet-scoped for non-admins."""
@@ -137,11 +139,11 @@ def get_budget_status(
 def get_cmms_analytics(
     outlet: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: UserResponse = Depends(require_permission("analytics", "view")),
+    current_user: UserResponse = Depends(require_permission("analytics", "view")),
 ):
     """Per-asset reliability & cost metrics + fleet roll-up (Tier 3).
 
     MTTR / MTBF / uptime% / total cost per asset, plus a repair-vs-replace flag
     when the asset's purchase cost is known.
     """
-    return cmms_svc.compute_fleet_analytics(db, outlet=outlet)
+    return cmms_svc.compute_fleet_analytics(db, outlet=outlet, user=current_user)

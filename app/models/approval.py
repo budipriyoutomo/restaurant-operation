@@ -1,9 +1,10 @@
 import uuid
-from sqlalchemy import BigInteger, Boolean, Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP, ForeignKey
+from sqlalchemy import BigInteger, Boolean, Column, String, Date, Text, Integer, Enum as SAEnum, TIMESTAMP, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped, company_key_column
 from app.database import Base
 from app.models.enums import ApprovalTypeEnum, ApprovalStatusEnum, ApprovalStepStatusEnum, ApproverRoleEnum
 
@@ -17,8 +18,9 @@ def _sa_enum(py_enum, pg_name):
     )
 
 
-class ApprovalRequest(Base):
+class ApprovalRequest(TenantScoped, Base):
     __tablename__ = "approval_requests"
+    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_approval_requests_company_number"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     # Polymorphic source: an approval is for an Issue OR a PurchaseRequest
@@ -35,7 +37,7 @@ class ApprovalRequest(Base):
         ForeignKey("purchase_requests.id", ondelete="CASCADE"),
         nullable=True,
     )
-    number = Column(String(30), nullable=False, unique=True)  # APR-2026-00001
+    number = Column(String(30), nullable=False)  # APR-2026-00001
     title = Column(String(500), nullable=False)
     type = Column(_sa_enum(ApprovalTypeEnum, "approval_type"), nullable=False)
     description = Column(Text, default="")
@@ -75,7 +77,7 @@ class ApprovalRequest(Base):
     )
 
 
-class ApprovalStep(Base):
+class ApprovalStep(TenantScoped, Base):
     __tablename__ = "approval_steps"
 
     id                  = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -105,8 +107,9 @@ class ApprovalStep(Base):
     approval_request = relationship("ApprovalRequest", back_populates="steps")
 
 
-class ApprovalNumberSequence(Base):
+class ApprovalNumberSequence(TenantScoped, Base):
     __tablename__ = "approval_number_sequences"
 
+    company_id = company_key_column()
     year = Column(Integer, primary_key=True)
     last_seq = Column(Integer, nullable=False, default=0)

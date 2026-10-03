@@ -7,10 +7,11 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 
 
-class GuestCase(Base):
+class GuestCase(TenantScoped, Base):
     __tablename__ = "guest_cases"
     __table_args__ = (
         CheckConstraint("channel IN ('walk-in', 'phone', 'google-review', 'instagram', 'whatsapp', 'other')",

@@ -4,11 +4,12 @@ from sqlalchemy import BigInteger, ForeignKey, Boolean, Column, Integer, String,
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
+from app.core.tenancy import TenantScoped
 from app.database import Base
 from app.models.enums import ApprovalTypeEnum
 
 
-class ApprovalPolicy(Base):
+class ApprovalPolicy(TenantScoped, Base):
     """A rule that resolves the approval-step chain for a new ApprovalRequest.
 
     Matching is by `approval_type` + `amount` within [min_amount, max_amount]

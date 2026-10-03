@@ -72,23 +72,40 @@ dc exec api python -m scripts.set_password admin@restaurant.com
 # prints a generated strong password once; repeat for the others or delete them
 ```
 
-Prefer not to seed demo users at all? Keep `RUN_SEED=0`, then create your admin
-directly (the register endpoint is admin-only, so bootstrap via the script):
+Prefer not to seed demo users at all? Keep `RUN_SEED=0` and onboard every
+customer through the platform admin (next section).
+
+### Companies and the platform admin (multi-tenancy, Todo-Pilot §11)
+
+Every business row belongs to one **company**; users see only their own
+company's data (enforced by the ORM — `app/core/tenancy.py`). Migration 040
+moves all existing data into **"Default Company"** (slug `default`).
+
+The SaaS operator is a **platform admin**: an account with no company that
+manages companies from the Platform page and cannot read any company's data.
+Create the first one once:
 
 ```bash
-dc exec api python - <<'PY'
-from app.database import SessionLocal
-from app.models.user import User
-from app.services.auth_service import hash_password
-import uuid, secrets
-db = SessionLocal()
-pw = secrets.token_urlsafe(18)
-db.add(User(id=uuid.uuid4(), email="you@company.com", name="Owner",
-            password_hash=hash_password(pw), role="admin"))
-db.commit()
-print("admin password:", pw)
-PY
+dc exec api python -m scripts.create_platform_admin ops@yourdomain.com "Ops Team"
+# prints a generated password once
 ```
+
+Sign in with it on the frontend → **Platform** page:
+
+- rename "Default Company" to the pilot customer's real name;
+- **New company** creates a customer in one step: the company, its default
+  roles (admin/manager/staff), an optional first outlet and its first admin
+  (password generated and shown once — send it to them);
+- **Deactivate** signs all of that company's users out and blocks sign-in;
+  nothing is deleted, and **Activate** restores access.
+
+Email addresses are unique across the whole platform: one account belongs to
+exactly one company. Scheduled jobs (PM generator, escalation, WhatsApp retry)
+run for every active company automatically.
+
+**Upgrading an existing install to 040:** take a backup first (see Backups),
+then `dc up -d --build` as usual. Existing users, roles and data end up in
+"Default Company" and keep working unchanged; then create a platform admin.
 
 ### Preventive-maintenance job
 `pm-generator` runs `scripts/run_pm_generator` every hour. It is idempotent and

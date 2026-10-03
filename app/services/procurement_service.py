@@ -39,18 +39,8 @@ _OPEN_PR_STATUSES = ("pending_approval", "approved", "ordered")
 # ---------------------------------------------------------------------------
 
 def _next_number(db: Session, prefix: str) -> str:
-    year = datetime.now().year
-    seq = db.execute(
-        text("""
-            INSERT INTO procurement_number_sequences (prefix, year, last_seq)
-            VALUES (:p, :y, 1)
-            ON CONFLICT (prefix, year) DO UPDATE
-              SET last_seq = procurement_number_sequences.last_seq + 1
-            RETURNING last_seq
-        """),
-        {"p": prefix, "y": year},
-    ).scalar_one()
-    return f"{prefix}-{year}-{seq:05d}"
+    from app.services.numbering import next_number
+    return next_number(db, prefix, "procurement_number_sequences")
 
 
 # ---------------------------------------------------------------------------

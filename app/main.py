@@ -8,9 +8,10 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from app.config import settings
+from app.core.tenancy import TenantContextError
 from app.routers import issues, tasks, approvals, outlets, categories, pics, analytics, auth, audit_logs
 from app.routers import assets, work_orders, notifications, vendors, training_programs, campaigns
-from app.routers import pm_schedules, approval_policies, parts, procurement, budgets, roles, qa_audits, guest_cases
+from app.routers import pm_schedules, approval_policies, parts, procurement, budgets, roles, qa_audits, guest_cases, platform
 
 limiter = Limiter(key_func=get_remote_address, default_limits=[settings.RATE_LIMIT_DEFAULT])
 
@@ -24,6 +25,13 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(TenantContextError)
+def _tenant_context_error(request: Request, exc: TenantContextError):
+    # Company data touched without a company (e.g. a platform admin calling a
+    # company endpoint). Fail closed with 403, never a leak or a bare 500.
+    return JSONResponse(status_code=403, content={"detail": "This action needs a company account."})
 
 logger = logging.getLogger("restaurantops")
 
@@ -78,6 +86,7 @@ app.include_router(procurement.pr_router)
 app.include_router(procurement.po_router)
 app.include_router(budgets.router)
 app.include_router(roles.router)
+app.include_router(platform.router)
 app.include_router(qa_audits.templates_router)
 app.include_router(qa_audits.router)
 app.include_router(guest_cases.router)

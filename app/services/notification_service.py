@@ -138,7 +138,7 @@ def notify_roles(
 
     users = (
         db.query(User)
-        .join(Role, Role.key == User.role)
+        .join(Role, (Role.key == User.role) & (Role.company_id == User.company_id))
         .filter(Role.approval_tier.in_(roles), User.is_active == True)  # noqa: E712
         .all()
     )

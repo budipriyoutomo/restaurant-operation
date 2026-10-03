@@ -1,5 +1,8 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.models.enums import IssueCategoryEnum, PriorityEnum
+from app.schemas.validators import in_enum
 
 # Matches the VARCHAR(500) title columns. Records derived from an Issue add a
 # prefix to its title, and issue_service trims those to fit.
@@ -54,6 +57,16 @@ class CreateIssueRequest(BaseModel):
     assetId: Optional[str] = None
     estimatedCost: Optional[int] = None   # IDR integer
 
+    @field_validator("category")
+    @classmethod
+    def check_category(cls, v: str) -> str:
+        return in_enum(v, IssueCategoryEnum)
+
+    @field_validator("priority")
+    @classmethod
+    def check_priority(cls, v: str) -> str:
+        return in_enum(v, PriorityEnum)
+
 
 class UpdateIssueRequest(BaseModel):
     status: Optional[str] = None
@@ -62,6 +75,11 @@ class UpdateIssueRequest(BaseModel):
     assignee: Optional[str] = None
     dueDate: Optional[str] = None
     priority: Optional[str] = None
+
+    @field_validator("priority")
+    @classmethod
+    def check_priority(cls, v: Optional[str]) -> Optional[str]:
+        return in_enum(v, PriorityEnum)
 
 
 class CancelIssueRequest(BaseModel):

@@ -185,20 +185,8 @@ DEFAULT_STEPS = [
 
 
 def _next_apr_number(db: Session) -> str:
-    from sqlalchemy import text
-    year = datetime.now().year
-    result = db.execute(
-        text("""
-            INSERT INTO approval_number_sequences (year, last_seq)
-            VALUES (:year, 1)
-            ON CONFLICT (year) DO UPDATE
-              SET last_seq = approval_number_sequences.last_seq + 1
-            RETURNING last_seq
-        """),
-        {"year": year},
-    )
-    seq = result.scalar_one()
-    return f"APR-{year}-{seq:05d}"
+    from app.services.numbering import next_number
+    return next_number(db, "APR", "approval_number_sequences")
 
 
 def create_approval_with_steps(
