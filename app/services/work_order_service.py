@@ -126,6 +126,7 @@ def wo_to_response(wo: WorkOrder) -> WorkOrderResponse:
         priority=wo.priority.value if hasattr(wo.priority, "value") else str(wo.priority),
         status=wo.status.value if hasattr(wo.status, "value") else str(wo.status),
         assignee=wo.assignee or "Unassigned",
+        assigneeUserId=str(wo.assignee_user_id) if wo.assignee_user_id else None,
         scheduledDate=wo.scheduled_date.isoformat() if wo.scheduled_date else None,
         completedDate=wo.completed_date.isoformat() if wo.completed_date else None,
         createdAt=wo.created_at.isoformat() if wo.created_at else "",
@@ -210,6 +211,14 @@ def transition_work_order(
     target_val = target_status.value if hasattr(target_status, "value") else str(target_status)
 
     can_transition(wo.status, target_status)   # raises InvalidTransitionError if illegal
+    # Work that needs approval waits for it; the approval itself starts the WO
+    # once decided (approval_service), so a manual start must not skip it (Todo-Pilot §23).
+    if target_val in ("in-progress", "completed") and wo.requires_approval and wo.approval is not None:
+        approval_status = wo.approval.status.value if hasattr(wo.approval.status, "value") else str(wo.approval.status)
+        if approval_status == "pending":
+            raise InvalidTransitionError(
+                f"Waiting for approval {wo.approval.number} — the work order starts once it is approved."
+            )
 
     wo.status = target_val
     now = datetime.now(timezone.utc)

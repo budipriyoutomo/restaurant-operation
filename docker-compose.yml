@@ -130,6 +130,29 @@ services:
           sleep 60;
         done
 
+  outlet-digest:
+    image: restaurantops-api:latest
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+      db:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-restaurantops}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-restaurantops}
+    healthcheck:
+      disable: true
+    # Daily/weekly GM summary for users who opted in (Todo-Pilot §25); idempotent per day.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          python -m scripts.run_outlet_digest || echo "[outlet-digest] run failed";
+          sleep 3600;
+        done
+
   db-backup:
     # Same major version as `db` so pg_dump matches the server.
     image: postgres:17-alpine

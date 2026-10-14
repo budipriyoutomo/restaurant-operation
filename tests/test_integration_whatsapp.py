@@ -103,7 +103,7 @@ class TestEvents:
         assert process_due(db)["sent"] >= 1
         msgs = _to(wa, MGR_PHONE)
         assert len(msgs) == 1
-        assert "Approval menunggu Anda" in msgs[0].body
+        assert "Persetujuan menunggu Anda" in msgs[0].body
 
     def test_my_request_decided(self, client, db, wa, admin, manager):
         # The requester is matched by display name (assignee of the Issue).
@@ -112,7 +112,7 @@ class TestEvents:
         client.patch(f"/api/approvals/{issue['approvalId']}/decide",
                      json={"decision": "rejected", "comment": "x"}, headers=manager)
         process_due(db)
-        assert any("Rejected" in m.body for m in _to(wa, MGR_PHONE))
+        assert any("ditolak" in m.body for m in _to(wa, MGR_PHONE))
 
     def test_work_order_assigned_to_me(self, client, db, wa, admin, manager):
         _opt_in(client, manager, MGR_PHONE)
@@ -124,7 +124,7 @@ class TestEvents:
             "assignee": "Manager WA",
         }, headers=admin)
         process_due(db)
-        assert any("Work order ditugaskan" in m.body for m in _to(wa, MGR_PHONE))
+        assert any("Perintah kerja ditugaskan" in m.body for m in _to(wa, MGR_PHONE))
 
     def test_issue_ready_to_close(self, client, db, wa, admin, manager):
         _opt_in(client, manager, MGR_PHONE)
@@ -134,7 +134,7 @@ class TestEvents:
         }, headers=admin).json()
         client.patch(f"/api/tasks/{issue['taskIds'][0]}", json={"status": "resolved"}, headers=admin)
         process_due(db)
-        assert any(f"Issue siap ditutup: {issue['number']}" in m.body for m in _to(wa, MGR_PHONE))
+        assert any(f"Laporan siap ditutup: {issue['number']}" in m.body for m in _to(wa, MGR_PHONE))
 
     def test_escalation_goes_to_admin(self, client, db, wa, admin, manager):
         _opt_in(client, admin, ADMIN_PHONE)

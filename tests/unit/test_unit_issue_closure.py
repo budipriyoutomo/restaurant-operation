@@ -63,3 +63,46 @@ def test_terminal_sets_match_spec():
     assert TASK_TERMINAL == {"resolved", "closed", "cancelled"}
     assert WORK_ORDER_TERMINAL == {"completed", "cancelled"}
     assert APPROVAL_TERMINAL == {"approved", "rejected"}
+
+
+# ---------------------------------------------------------------------------
+# "Siap ditutup" (Todo-Pilot §18 / UX-5, Option A)
+# ---------------------------------------------------------------------------
+
+from app.services.issue_closure_service import is_ready_to_close  # noqa: E402
+
+
+def _ready(status, task=None, wo=None, approval=None):
+    issue = _issue(task, wo, approval)
+    issue.status = status
+    return is_ready_to_close(issue)
+
+
+def test_issue_with_only_a_completed_wo_is_ready():
+    # The case UX-5 is about: no Task → no roll-up → stuck "open".
+    assert _ready("open", wo="completed")
+    assert _ready("in-progress", wo="completed", approval="approved")
+
+
+def test_resolved_issue_is_waiting_to_be_closed():
+    assert _ready("resolved", task="resolved")
+
+
+def test_open_derived_record_means_not_ready():
+    assert not _ready("in-progress", wo="in-progress")
+    assert not _ready("open", task="resolved", approval="pending")
+
+
+def test_issue_without_derived_records_is_not_ready():
+    # Work happens outside the system: nothing signals it is done.
+    assert not _ready("open")
+
+
+@pytest.mark.parametrize("status", ["closed", "cancelled"])
+def test_finished_issue_is_not_ready(status):
+    assert not _ready(status, wo="completed")
+
+
+def test_waiting_after_rejection_is_not_ready():
+    # Rejected approval + cancelled WO: the manager must revise or cancel, not close.
+    assert not _ready("waiting", wo="cancelled", approval="rejected")

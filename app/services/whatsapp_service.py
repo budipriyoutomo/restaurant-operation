@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 from app.core.tenancy import bypass_tenant
 from app.config import settings
 from app.models.whatsapp import WhatsAppMessage
+from app.services.deep_link import record_url
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ WA_EVENT_PREFS = {
     "approval_decided":     "waApprovalDecided",
     "work_order_assigned":  "waWorkOrderAssigned",
     "issue_ready_to_close": "waIssueReadyToClose",
+    "outlet_digest":        "waOutletDigest",      # Todo-Pilot §25
 }
 WA_MASTER_PREF = "waEnabled"
 
@@ -117,10 +119,11 @@ def backoff_delay(attempts: int) -> timedelta:
     return timedelta(seconds=BACKOFF_SECONDS[idx])
 
 
-def format_body(title: str, message: str) -> str:
+def format_body(title: str, message: str, entity_type: Optional[str] = None, entity_id=None) -> str:
     lines = [f"*{title}*", message]
-    if settings.APP_URL:
-        lines += ["", settings.APP_URL.rstrip("/")]
+    link = record_url(entity_type, entity_id)
+    if link:
+        lines += ["", link]
     return "\n".join(lines)
 
 

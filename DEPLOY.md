@@ -122,6 +122,14 @@ a request is escalated once per stuck step. Check it with
 Without Docker, use the systemd units in `deploy/`
 (`restaurantops-escalate.{service,timer}`, same setup as the PM timer).
 
+### Outlet digest job
+`outlet-digest` runs `scripts/run_outlet_digest` every hour. Users who turned on
+the daily and/or weekly summary (Settings → Notifications) and can open the
+dashboard get, from 07:00 local time (`DIGEST_TZ`, default `Asia/Jakarta`), one
+summary per day (weekly: Mondays) of their outlets — open issues, SLA, QA,
+guests waiting, budget, downtime, exceptions first. In-app always; email and
+WhatsApp per the user's channel settings. Check it with `dc logs outlet-digest`.
+
 ### Email notifications (optional)
 Notifications are always stored in-app. To also send email, set SMTP in
 `.env.production` and restart `api`, `pm-generator` and `approval-escalator`:

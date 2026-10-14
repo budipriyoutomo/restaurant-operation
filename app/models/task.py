@@ -31,6 +31,8 @@ class Task(TenantScoped, Base):
     status = Column(_sa_enum(TaskStatusEnum, "task_status"), nullable=False, default=TaskStatusEnum.open)
     priority = Column(_sa_enum(PriorityEnum, "priority"), nullable=False, default=PriorityEnum.medium)
     assignee = Column(String(200), default="Unassigned")
+    # The assigned user (migration 041, Todo-Pilot §17); `assignee` keeps the name for display.
+    assignee_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     due_date = Column(Date)
     outlet = Column(String(200), default="")
     # Real FK alongside the denormalised name (migration 024). Nullable:

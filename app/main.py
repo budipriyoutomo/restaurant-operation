@@ -9,7 +9,7 @@ from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.core.tenancy import TenantContextError
-from app.routers import issues, tasks, approvals, outlets, categories, pics, analytics, auth, audit_logs
+from app.routers import issues, tasks, approvals, outlets, categories, pics, analytics, auth, audit_logs, my_work, onboarding, counts
 from app.routers import assets, work_orders, notifications, vendors, training_programs, campaigns
 from app.routers import pm_schedules, approval_policies, parts, procurement, budgets, roles, qa_audits, guest_cases, platform
 
@@ -62,6 +62,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["*"],
+    # Paged lists report their size here (Todo-Pilot §22).
+    expose_headers=["X-Total-Count"],
 )
 
 app.include_router(auth.router)
@@ -90,6 +92,9 @@ app.include_router(platform.router)
 app.include_router(qa_audits.templates_router)
 app.include_router(qa_audits.router)
 app.include_router(guest_cases.router)
+app.include_router(my_work.router)
+app.include_router(onboarding.router)
+app.include_router(counts.router)
 
 
 @app.get("/health")

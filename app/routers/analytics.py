@@ -147,3 +147,26 @@ def get_cmms_analytics(
     when the asset's purchase cost is known.
     """
     return cmms_svc.compute_fleet_analytics(db, outlet=outlet, user=current_user)
+
+
+@router.get("/outlets")
+def compare_outlets(
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(require_permission("dashboard", "view", ("analytics", "view"))),
+):
+    """Outlets side by side for the GM (Todo-Pilot §25): issues & SLA, QA score,
+    guests waiting, budget, downtime — exceptions flagged and listed first.
+    Only outlets the caller may see."""
+    from app.services.outlet_comparison_service import compare_outlets as _compare
+    return _compare(db, current_user, days=days)
+
+
+@router.get("/overview")
+def get_overview(
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(require_permission("dashboard", "view", ("analytics", "view"))),
+):
+    """Executive dashboard numbers, counted by the database (Todo-Pilot §22)."""
+    from app.services.overview_service import overview
+    return overview(db, current_user)

@@ -63,7 +63,7 @@ class TestNextApproverNotified:
         client.patch(f"/api/approvals/{approval_id}/decide",
                      json={"decision": "approved"}, headers=manager)
         # No "Approved/Rejected" decided notification yet (still mid-chain)
-        decided = _notes(client, admin, contains="Approved", entity_type="approvals")
+        decided = _notes(client, admin, contains="disetujui", entity_type="approvals")
         assert decided == []
 
 
@@ -76,5 +76,5 @@ class TestFinalDecisionNotifies:
         assert r2.status_code == 200, r2.text
         assert r2.json()["status"] == "approved"
 
-        decided = _notes(client, admin, contains="Approved", entity_type="approvals")
+        decided = _notes(client, admin, contains="disetujui", entity_type="approvals")
         assert len(decided) >= 1

@@ -31,6 +31,7 @@ from app.schemas.approval import (
     DecideApprovalRequest,
 )
 from app.services.outlet_scope_service import assert_can_access, scoped_query
+from app.services.notification_texts import L
 from app.services.notification_service import notify_approval_decided, notify_next_approver, notify_roles
 
 
@@ -449,9 +450,10 @@ def escalate_stale_approvals(db: Session, threshold_days: int = ESCALATION_THRES
         notify_roles(
             db,
             roles=["admin"],
-            title=f"Approval macet: {approval.number}",
+            title=L(f"Persetujuan macet: {approval.number}", f"Approval stuck: {approval.number}"),
             # issue_number is NULL for purchase-request approvals (Tier 6.1).
-            message=f"Approval untuk {approval.issue_number or approval.title} menggantung > {threshold_days} hari dan dieskalasi.",
+            message=L(f"Persetujuan untuk {approval.issue_number or approval.title} menggantung > {threshold_days} hari dan dieskalasi.",
+                      f"The approval for {approval.issue_number or approval.title} has waited > {threshold_days} days and was escalated."),
             ntype="critical",
             entity_type="approvals",
             entity_id=approval.id,
@@ -518,19 +520,27 @@ def _sync_linked_purchase_request(db: Session, approval: ApprovalRequest, new_st
 # DB: list / get
 # ---------------------------------------------------------------------------
 
-def list_approvals(
-    db: Session,
-    type_filter: Optional[str] = None,
-    status_filter: Optional[str] = None,
-    user=None,
-) -> List[ApprovalResponse]:
+def approvals_query(db: Session, type_filter: Optional[str] = None, status_filter: Optional[str] = None, user=None):
+    """Filtered, outlet-scoped approvals — unordered, for paging (Todo-Pilot §22)."""
     # Outlet scoping (Tier 4.2b)
     query = scoped_query(db, ApprovalRequest, user) if user is not None else db.query(ApprovalRequest)
     if type_filter:
         query = query.filter(ApprovalRequest.type == type_filter)
     if status_filter:
         query = query.filter(ApprovalRequest.status == status_filter)
-    approvals = query.order_by(ApprovalRequest.created_at.desc()).all()
+    return query
+
+
+APPROVAL_ORDER = (ApprovalRequest.created_at.desc(), ApprovalRequest.id.desc())
+
+
+def list_approvals(
+    db: Session,
+    type_filter: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    user=None,
+) -> List[ApprovalResponse]:
+    approvals = approvals_query(db, type_filter, status_filter, user).order_by(*APPROVAL_ORDER).all()
     return [_approval_to_response(a) for a in approvals]
 
 

@@ -1,6 +1,7 @@
+import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -16,19 +17,33 @@ from app.schemas.approval import (
 from app.services import approval_service
 from app.services.approval_service import ESCALATION_THRESHOLD_DAYS, ForbiddenStepError
 from app.services.auth_service import UserResponse, get_current_user, require_permission
+from app.services.pagination import Page, like_pattern, paginate
+from sqlalchemy import or_
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])
 
 
 @router.get("", response_model=List[ApprovalResponse])
 def list_approvals(
+    response: Response,
     type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    issue_id: Optional[uuid.UUID] = Query(None),
+    q: Optional[str] = Query(None, description="Search number, title, requester or outlet"),
+    page: Page = Depends(),
     db: Session = Depends(get_db),
     current_user: UserResponse = Depends(require_permission("approvals", "view")),
 ):
-    """List Approval Requests with optional type/status filters (FR-12)."""
-    return approval_service.list_approvals(db, type_filter=type, status_filter=status, user=current_user)
+    """List Approval Requests with optional type/status filters (FR-12); paged (Todo-Pilot §22)."""
+    query = approval_service.approvals_query(db, type, status, user=current_user)
+    if issue_id:
+        query = query.filter(ApprovalRequest.issue_id == issue_id)
+    if q and q.strip():
+        p = like_pattern(q)
+        query = query.filter(or_(ApprovalRequest.number.ilike(p), ApprovalRequest.title.ilike(p),
+                                 ApprovalRequest.requester.ilike(p), ApprovalRequest.outlet.ilike(p)))
+    rows = paginate(query, page, response, *approval_service.APPROVAL_ORDER)
+    return [approval_service._approval_to_response(a) for a in rows]
 
 
 @router.get("/{approval_id}", response_model=ApprovalResponse)

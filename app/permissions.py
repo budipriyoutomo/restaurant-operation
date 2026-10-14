@@ -123,3 +123,9 @@ DEFAULT_PERMISSIONS: Dict[str, Dict[str, str]] = {
     }),
     "admin": full_access(),
 }
+
+
+# Home page per role (Todo-Pilot §19). Page ids = module keys (+ always-visible pages).
+DEFAULT_HOME_PAGE = "my-work"
+ALWAYS_VISIBLE_PAGES = ("my-work", "notifications", "settings")
+HOME_PAGES = ALWAYS_VISIBLE_PAGES + tuple(m["key"] for m in MODULES if m["key"] not in ("vendors", "budgets"))

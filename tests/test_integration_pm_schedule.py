@@ -117,3 +117,29 @@ class TestPreventiveCompletionUpdatesAssetPM:
         asset = client.get(f"/api/assets/{asset_id}", headers=admin).json()
         assert asset["lastPM"] == today.isoformat()
         assert asset["nextPM"] == (today + timedelta(days=30)).isoformat()
+
+
+class TestGeneratedWorkOrderScoping:
+    """Found while doing Todo-Pilot §17: generated WOs had no outlet_id, i.e.
+    they were "shared" and every outlet could see them."""
+
+    def test_preventive_wo_belongs_to_the_asset_outlet(self, client, db, admin, asset_id):
+        from app.models.outlet import Outlet
+        jakarta = db.query(Outlet).filter(Outlet.name == "Jakarta").one()
+        jkt_staff = seed_user_headers(db, "jkt_pm@test.test", "manager", outlets=[jakarta])
+        _make_schedule(client, admin, asset_id, next_due=date.today().isoformat())   # Bandung asset
+        client.post("/api/pm-schedules/run-now", headers=admin)
+
+        wo = _preventive_wos(client, admin, asset_id)[0]
+        assert client.get(f"/api/work-orders/{wo['id']}", headers=jkt_staff).status_code == 404
+        assert wo["id"] not in {w["id"] for w in client.get("/api/work-orders", headers=jkt_staff).json()}
+
+    def test_name_only_schedule_still_notifies_the_matching_user(self, client, db, admin, asset_id):
+        tech = seed_user_headers(db, "rudi_pm@test.test", "staff", name="Rudi Teknisi")
+        sched = _make_schedule(client, admin, asset_id, next_due=date.today().isoformat())
+        client.patch(f"/api/pm-schedules/{sched['id']}", json={"assigneeName": "Rudi Teknisi"}, headers=admin)
+        client.post("/api/pm-schedules/run-now", headers=admin)
+
+        wo = _preventive_wos(client, admin, asset_id)[0]
+        assert wo["assigneeUserId"] is not None
+        assert any(n["entity_id"] == wo["id"] for n in client.get("/api/notifications", headers=tech).json())

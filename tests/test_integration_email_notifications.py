@@ -49,7 +49,7 @@ def test_new_approval_emails_step1_approver(client, outbox, admin, manager):
     _approval_issue(client, admin)
     mails = _to(outbox, "mgr_mail@test.test")
     assert len(mails) == 1
-    assert "Approval menunggu Anda" in mails[0].subject
+    assert "Persetujuan menunggu Anda" in mails[0].subject
 
 
 def test_next_step_approver_emailed_after_step1(client, outbox, admin, manager):
@@ -57,7 +57,7 @@ def test_next_step_approver_emailed_after_step1(client, outbox, admin, manager):
     outbox.clear()
     client.patch(f"/api/approvals/{issue['approvalId']}/decide",
                  json={"decision": "approved"}, headers=manager)
-    assert any("Approval menunggu Anda" in m.subject for m in _to(outbox, "admin_mail@test.test"))
+    assert any("Persetujuan menunggu Anda" in m.subject for m in _to(outbox, "admin_mail@test.test"))
 
 
 def test_opt_out_preference_stops_email(client, outbox, admin, manager):
@@ -91,7 +91,7 @@ def test_work_order_assignment_emails_assignee(client, db, outbox, admin):
 
     mails = _to(outbox, "tech_mail@test.test")
     assert len(mails) == 1
-    assert "Work order ditugaskan" in mails[0].subject
+    assert "Perintah kerja ditugaskan" in mails[0].subject
 
 
 def _own_session():

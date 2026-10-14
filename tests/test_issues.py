@@ -29,6 +29,14 @@ class TestCreateIssue:
         res = client.post("/api/issues", json=ISSUE_PAYLOAD)
         assert res.status_code == 201
 
+    def test_created_at_is_a_timestamp(self, client):
+        # The card shows "2 hours ago" (Todo-Pilot §21); createdDate alone is a day.
+        from datetime import datetime
+        data = client.post("/api/issues", json=ISSUE_PAYLOAD).json()
+        created = datetime.fromisoformat(data["createdAt"])
+        assert created.tzinfo is not None
+        assert created.date().isoformat() == data["createdDate"]
+
     def test_number_format(self, client):
         res = client.post("/api/issues", json=ISSUE_PAYLOAD)
         data = res.json()

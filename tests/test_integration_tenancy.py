@@ -76,6 +76,17 @@ class TestRequestRunsAsCallersCompany:
         assert client.post(f"/api/issues/{a['id']}/cancel", json={"reason": "x"}, headers=beta["admin"]).status_code == 404
         assert client.patch(f"/api/tasks/{a['taskIds'][0]}", json={"status": "resolved"}, headers=beta["admin"]).status_code == 404
 
+    def test_bulk_close_cannot_touch_another_company(self, client, alpha, beta):
+        # IDs travel in the body here, so the generic leak sweep does not cover it (Todo-Pilot §18).
+        a = _issue(client, alpha["admin"], "Jakarta")
+        client.patch(f"/api/tasks/{a['taskIds'][0]}", json={"status": "resolved"}, headers=alpha["admin"])
+        assert client.get(f"/api/issues/{a['id']}", headers=alpha["admin"]).json()["readyToClose"] is True
+
+        res = client.post("/api/issues/bulk-close", json={"ids": [a["id"]]}, headers=beta["admin"])
+        assert res.status_code == 200
+        assert res.json() == {"closed": [], "failed": [{"id": a["id"], "number": None, "reason": "Issue not found"}]}
+        assert client.get(f"/api/issues/{a['id']}", headers=alpha["admin"]).json()["status"] == "resolved"
+
     def test_document_numbers_start_at_one_per_company(self, client, alpha, beta):
         a = _issue(client, alpha["admin"], "Jakarta")
         _issue(client, alpha["admin"], "Jakarta")

@@ -162,6 +162,7 @@ class WorkOrderResponse(BaseModel):
     priority: str
     status: str
     assignee: str
+    assigneeUserId: Optional[str] = None   # Todo-Pilot §17; null = not linked to a user
     scheduledDate: Optional[str] = None
     completedDate: Optional[str] = None
     createdAt: str
@@ -201,6 +202,7 @@ class CreateWorkOrderRequest(BaseModel):
     description: str = ""
     priority: str = "medium"
     assignee: str = "Unassigned"
+    assigneeUserId: Optional[str] = None  # picker choice; wins over `assignee` (Todo-Pilot §17)
     scheduledDate: Optional[str] = None
     estimatedCost: Optional[int] = None   # IDR integer
 
@@ -208,6 +210,7 @@ class CreateWorkOrderRequest(BaseModel):
 class UpdateWorkOrderRequest(BaseModel):
     status: Optional[str] = None
     assignee: Optional[str] = None
+    assigneeUserId: Optional[str] = None
     priority: Optional[str] = None
     scheduledDate: Optional[str] = None
     completedDate: Optional[str] = None

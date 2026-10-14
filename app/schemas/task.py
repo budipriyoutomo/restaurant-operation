@@ -14,15 +14,18 @@ class TaskResponse(BaseModel):
     status: str
     priority: str
     assignee: str
+    assigneeUserId: Optional[str] = None   # Todo-Pilot §17; null = not linked to a user
     dueDate: Optional[str] = None
     outlet: str
     issueId: str
     issueNumber: str
+    issueStatus: Optional[str] = None      # a finished Issue locks its tasks (Todo-Pilot §22/§23)
 
 
 class UpdateTaskRequest(BaseModel):
     status: Optional[str] = None
     assignee: Optional[str] = None
+    assigneeUserId: Optional[str] = None   # wins over `assignee`
     priority: Optional[str] = None
 
     @field_validator("status")

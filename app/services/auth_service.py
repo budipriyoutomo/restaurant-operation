@@ -53,6 +53,7 @@ class UserResponse(BaseModel):
     company_id: Optional[str] = None
     company_name: Optional[str] = None
     is_platform_admin: bool = False
+    home_page: Optional[str] = None   # role's landing page (Todo-Pilot §19); None = My Work
 
 
 class RegisterRequest(BaseModel):
@@ -126,6 +127,7 @@ def _user_to_response(u: User) -> UserResponse:
         outlet_ids=override,
         role_name=role.name if role else u.role,
         approval_tier=role.approval_tier if role else "staff",
+        home_page=role.home_page if role else None,
         permissions=role_permissions(role),
         all_outlets=all_outlets,
         effective_outlet_ids=effective,

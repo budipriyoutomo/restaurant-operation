@@ -16,6 +16,22 @@ class ClosureBlocker(BaseModel):
     status: str
 
 
+class IssueApprovalSummary(BaseModel):
+    """Where the Issue's approval stands — for the card (Todo-Pilot §21/§22)."""
+    id: str
+    number: str
+    status: str
+    currentStepOrder: int
+    stepCount: int
+    escalated: bool = False
+
+
+class IssueWorkOrderSummary(BaseModel):
+    id: str
+    number: str
+    status: str
+
+
 class IssueResponse(BaseModel):
     """Shape matches the frontend Issue interface in lib/types.ts exactly."""
     id: str
@@ -29,6 +45,7 @@ class IssueResponse(BaseModel):
     assignee: str
     dueDate: Optional[str] = None
     createdDate: str
+    createdAt: Optional[str] = None   # ISO timestamp, for "2 hours ago" on the card (Todo-Pilot §21)
     slaBreach: bool
     taskIds: List[str] = []
     approvalId: Optional[str] = None
@@ -36,6 +53,12 @@ class IssueResponse(BaseModel):
     # Derived records that are not terminal yet — while non-empty the Issue
     # cannot be resolved/closed (Todo-Pilot §1). Items: {type, id, number, status}.
     closureBlockers: List[ClosureBlocker] = []
+    readyToClose: bool = False   # "Siap ditutup" — Todo-Pilot §18
+    assigneeUserId: Optional[str] = None   # Todo-Pilot §17; null = not linked to a user
+    photoCount: int = 0
+    # Summaries so a page of cards needs no other list (Todo-Pilot §22)
+    approval: Optional[IssueApprovalSummary] = None
+    workOrder: Optional[IssueWorkOrderSummary] = None                    # photos taken when reported (Todo-Pilot §20)
 
 
 class CreateIssueRequest(BaseModel):
@@ -48,6 +71,7 @@ class CreateIssueRequest(BaseModel):
     category: str
     priority: str
     assignee: str = "Unassigned"
+    assigneeUserId: Optional[str] = None   # picker choice; wins over `assignee` (Todo-Pilot §17)
     dueDate: Optional[str] = None
     generateTask: bool = True
     generateApproval: bool = False
@@ -73,6 +97,7 @@ class UpdateIssueRequest(BaseModel):
     title: Optional[str] = Field(default=None, max_length=TITLE_MAX_LENGTH)
     description: Optional[str] = None
     assignee: Optional[str] = None
+    assigneeUserId: Optional[str] = None   # Todo-Pilot §17; wins over `assignee`
     dueDate: Optional[str] = None
     priority: Optional[str] = None
 
@@ -94,3 +119,32 @@ class ReviseApprovalRequest(BaseModel):
     """Revised cost after a rejection; goes back through the approval chain."""
     amount: int = Field(ge=0)            # IDR integer
     reason: Optional[str] = Field(default=None, max_length=1000)
+
+
+# Bulk close of "Siap ditutup" Issues (Todo-Pilot §18 / UX-5).
+BULK_CLOSE_MAX = 100
+
+
+class BulkCloseRequest(BaseModel):
+    ids: List[str] = Field(min_length=1, max_length=BULK_CLOSE_MAX)
+
+
+class BulkCloseFailure(BaseModel):
+    id: str
+    number: Optional[str] = None
+    reason: str
+
+
+class BulkCloseResponse(BaseModel):
+    closed: List[IssueResponse]
+    failed: List[BulkCloseFailure]
+
+
+class IssuePhotoResponse(BaseModel):
+    """A photo on an Issue (Todo-Pilot §20). URLs are authenticated API routes."""
+    id: str
+    caption: Optional[str] = None
+    fileUrl: str
+    thumbnailUrl: str
+    mimeType: Optional[str] = None
+    createdAt: str

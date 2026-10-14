@@ -27,6 +27,7 @@ from app.models.pm_schedule import PMSchedule
 from app.schemas.pm_schedule import PMScheduleResponse
 from app.services.audit_service import write_audit
 from app.services.notification_service import notify_work_order_assigned
+from app.services.assignee_service import resolve_assignee
 
 
 # ---------------------------------------------------------------------------
@@ -196,15 +197,22 @@ def _spawn_pm_wo(db: Session, sched: PMSchedule, period_key: str,
         asset_id=sched.asset_id,
         asset_name=asset_name,
         outlet=sched.outlet,
+        # Without it the WO was "shared" — visible to every outlet (fixed with Todo-Pilot §17).
+        outlet_id=sched.outlet_id,
         title=f"[Preventif] {sched.name}",
         description="",
         priority="medium",
         status="scheduled",
         assignee=_resolve_assignee(sched),
+        assignee_user_id=sched.assignee_user_id,   # notified by id (Todo-Pilot §17)
         scheduled_date=scheduled_date,
         pm_schedule_id=sched.id,
         pm_period_key=period_key,
     )
+    if wo.assignee_user_id is None:
+        # Name-only schedule: link the name when exactly one active user has it
+        # (never raises — this runs from cron). Todo-Pilot §17.
+        wo.assignee, wo.assignee_user_id = resolve_assignee(db, user_id=None, name=wo.assignee, outlet_id=wo.outlet_id)
     db.add(wo)
     db.flush()  # need wo.id for checklist items
     notify_work_order_assigned(db, wo)

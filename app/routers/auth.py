@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -22,6 +22,8 @@ from app.services.auth_service import (
     update_user,
 )
 from app.services.role_service import assert_can_assign_role, assert_can_grant
+from app.services.assignee_service import assignable_users
+from app.services.outlet_scope_service import resolve_outlet_id
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -59,6 +61,40 @@ def list_users(
     approvals:manage (the approval delegation picker lists users)."""
     users = db.query(User).order_by(User.name).all()
     return [_user_to_response(u) for u in users]
+
+
+class AssignableUser(BaseModel):
+    id: str
+    name: str
+    role_name: str
+    approval_tier: str
+
+
+@router.get("/users/assignable", response_model=List[AssignableUser])
+def list_assignable_users(
+    outlet: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: UserResponse = Depends(require_permission(
+        "issues", "view", ("tasks", "view"), ("cmms", "view"), ("maintenance", "view"))),
+):
+    """Active users who can work at `outlet` — the assignee picker (Todo-Pilot §17).
+
+    Open to anyone who reports or handles work, unlike the full user list.
+    No outlet = shared record: every active user.
+    """
+    outlet_id = resolve_outlet_id(db, outlet)          # unknown name → 422
+    return [
+        AssignableUser(
+            id=str(u.id), name=u.name,
+            role_name=u.role_obj.name if u.role_obj else u.role,
+            approval_tier=_value(u.role_obj.approval_tier) if u.role_obj else "staff",
+        )
+        for u in assignable_users(db, outlet_id)
+    ]
+
+
+def _value(v) -> str:
+    return v.value if hasattr(v, "value") else str(v)
 
 
 @router.patch("/users/{user_id}", response_model=UserResponse)

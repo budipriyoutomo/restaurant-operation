@@ -1,5 +1,6 @@
 from app.models.company import Company
 from app.models.issue import Issue, IssueNumberSequence
+from app.models.issue_photo import IssuePhoto
 from app.models.task import Task, TaskNumberSequence
 from app.models.approval import ApprovalRequest, ApprovalNumberSequence
 from app.models.outlet import Outlet

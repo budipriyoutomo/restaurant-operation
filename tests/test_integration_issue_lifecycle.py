@@ -105,13 +105,13 @@ class TestClosureGuard:
     def test_manager_notified_when_last_child_finishes(self, client, admin, manager, asset_id):
         issue = _maint(client, admin, asset_id, 200_000)
         client.patch(f"/api/tasks/{issue['taskIds'][0]}", json={"status": "resolved"}, headers=admin)
-        ready = [n for n in _notifications(client, manager) if n["title"].startswith("Issue siap ditutup")]
+        ready = [n for n in _notifications(client, manager) if n["title"].startswith("Laporan siap ditutup")]
         assert ready == []                                      # WO still open
 
         _transition(client, admin, issue["workOrderId"], "in-progress")
         _transition(client, admin, issue["workOrderId"], "completed")
         ready = [n for n in _notifications(client, manager)
-                 if n["title"] == f"Issue siap ditutup: {issue['number']}"]
+                 if n["title"] == f"Laporan siap ditutup: {issue['number']}"]
         assert len(ready) == 1
 
     def test_issue_is_not_auto_closed(self, client, admin):

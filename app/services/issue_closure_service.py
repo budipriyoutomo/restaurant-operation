@@ -9,6 +9,7 @@ only move to `resolved`/`closed` once every record derived from it is terminal:
 
 Pure functions (no DB):
   can_close_issue                  — which derived records still block closure
+  is_ready_to_close                — "Siap ditutup": finished work, Issue not closed yet
   derive_issue_status_from_tasks   — Task → Issue roll-up rule (Todo-Next §2.1)
 
 DB functions:
@@ -95,6 +96,25 @@ def can_close_issue(issue) -> ClosureCheckResult:
 
 def has_children(issue) -> bool:
     return bool(issue.tasks) or bool(issue.work_orders) or getattr(issue, "approval", None) is not None
+
+
+# Not ready although nothing blocks: `waiting` follows a rejected approval —
+# the manager must revise the cost or cancel, not close.
+_NOT_READY_STATUSES = frozenset({"closed", "cancelled", "waiting"})
+
+
+def is_ready_to_close(issue) -> bool:
+    """Pure: is this Issue "Siap ditutup" (Todo-Pilot §18 / UX-5, Option A)?
+
+    True when it has derived records, all of them are terminal, and it is not
+    closed yet. Covers Issues no roll-up resolves (only a Work Order, no Task),
+    which otherwise look "Open" on the dashboard after the work is done, and
+    `resolved` Issues waiting for the manager's close. An Issue without derived
+    records is never ready: nothing in the system says its work is done.
+    """
+    if _value(issue.status) in _NOT_READY_STATUSES:
+        return False
+    return has_children(issue) and can_close_issue(issue).can_close
 
 
 # ---------------------------------------------------------------------------

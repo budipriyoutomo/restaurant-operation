@@ -79,6 +79,8 @@ class WorkOrder(TenantScoped, Base):
     priority = Column(_sa_enum(PriorityEnum, "priority"), nullable=False, default=PriorityEnum.medium)
     status = Column(_sa_enum(WorkOrderStatusEnum, "work_order_status"), nullable=False, default=WorkOrderStatusEnum.scheduled)
     assignee = Column(String(200), default="Unassigned")
+    # The assigned user (migration 041, Todo-Pilot §17); `assignee` keeps the name for display.
+    assignee_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     scheduled_date = Column(Date)
     completed_date = Column(Date)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)

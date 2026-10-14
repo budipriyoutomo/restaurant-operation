@@ -33,6 +33,7 @@ class RoleResponse(BaseModel):
     approval_tier: str
     is_system: bool
     user_count: int = 0
+    home_page: Optional[str] = None   # Todo-Pilot §19; None = My Work
 
 
 class CreateRoleRequest(BaseModel):
@@ -43,6 +44,7 @@ class CreateRoleRequest(BaseModel):
     all_outlets: bool = False
     outlet_ids: List[str] = []
     approval_tier: str = "staff"
+    home_page: Optional[str] = None
 
 
 class UpdateRoleRequest(BaseModel):
@@ -52,6 +54,7 @@ class UpdateRoleRequest(BaseModel):
     all_outlets: Optional[bool] = None
     outlet_ids: Optional[List[str]] = None
     approval_tier: Optional[str] = None
+    home_page: Optional[str] = None   # "my-work" resets to the default
 
 
 class ModuleResponse(BaseModel):
@@ -62,6 +65,17 @@ class ModuleResponse(BaseModel):
 
 
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_-]{1,49}$")
+
+
+def _validate_home(home: Optional[str], permissions: Dict[str, str]) -> Optional[str]:
+    """A home page must be a page the role can open; "my-work" = default (None)."""
+    if home in (None, "", perm.DEFAULT_HOME_PAGE):
+        return None
+    if home not in perm.HOME_PAGES:
+        raise HTTPException(status_code=422, detail=f"home_page must be one of {list(perm.HOME_PAGES)}")
+    if home not in perm.ALWAYS_VISIBLE_PAGES and permissions.get(home, perm.NONE) == perm.NONE:
+        raise HTTPException(status_code=422, detail=f"The role cannot open '{home}', so it cannot be its home page")
+    return home
 
 
 def _to_response(role: Role, user_count: int = 0) -> RoleResponse:
@@ -75,6 +89,7 @@ def _to_response(role: Role, user_count: int = 0) -> RoleResponse:
         approval_tier=role.approval_tier,
         is_system=role.is_system,
         user_count=user_count,
+        home_page=role.home_page,
     )
 
 
@@ -183,9 +198,11 @@ def create_role(db: Session, req: CreateRoleRequest, caller: UserResponse) -> Ro
     outlet_ids = [] if req.all_outlets else req.outlet_ids
     assert_can_grant(caller, permissions, req.all_outlets, outlet_ids, req.approval_tier)
 
+    home_page = _validate_home(req.home_page, permissions)
     role = Role(
         key=key,
         name=req.name.strip(),
+        home_page=home_page,
         description=req.description,
         permissions=permissions,
         all_outlets=req.all_outlets,
@@ -229,6 +246,8 @@ def update_role(db: Session, key: str, req: UpdateRoleRequest, caller: UserRespo
         role.name = req.name.strip()
     if req.description is not None:
         role.description = req.description
+    if req.home_page is not None:   # cosmetic, not an access change (Todo-Pilot §19)
+        role.home_page = _validate_home(req.home_page, permissions)
     role.permissions = permissions
     role.all_outlets = all_outlets
     role.approval_tier = tier
@@ -270,5 +289,6 @@ def ensure_default_roles(db: Session) -> None:
                 key=key, name=name, description=desc,
                 permissions=perm.DEFAULT_PERMISSIONS[key],
                 all_outlets=all_outlets, approval_tier=tier, is_system=True,
+                home_page="dashboard" if key == "admin" else None,   # migration 042
             ))
     db.flush()

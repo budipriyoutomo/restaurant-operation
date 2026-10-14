@@ -41,6 +41,8 @@ class Role(TenantScoped, Base):
     all_outlets = Column(Boolean, nullable=False, default=False)
     # Which approver_role this role acts as in approval workflows: staff | manager | admin
     approval_tier = Column(String(20), nullable=False, default="staff")
+    # Landing page of the role's users (migration 042, Todo-Pilot §19). NULL = My Work.
+    home_page = Column(String(40), nullable=True)
     is_system = Column(Boolean, nullable=False, default=False)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

@@ -9,7 +9,7 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from app.core.category_defaults import get_approval_type
@@ -18,7 +18,7 @@ from app.models.asset import Asset, WorkOrder, WorkOrderNumberSequence
 from app.models.enums import IssueStatusEnum, PriorityEnum, TaskStatusEnum, WorkOrderStatusEnum
 from app.models.issue import Issue, IssueNumberSequence
 from app.models.task import Task, TaskNumberSequence
-from app.schemas.issue import CreateIssueRequest, IssueResponse, UpdateIssueRequest
+from app.schemas.issue import CreateIssueRequest, IssueApprovalSummary, IssueResponse, IssueWorkOrderSummary, UpdateIssueRequest
 from app.services.audit_service import write_audit
 from app.services.guest_service import ensure_case as ensure_guest_case
 from app.services.issue_closure_service import (
@@ -27,11 +27,15 @@ from app.services.issue_closure_service import (
     TASK_TERMINAL,
     WORK_ORDER_TERMINAL,
     can_close_issue,
+    is_ready_to_close,
 )
 from app.services.outlet_scope_service import resolve_outlet_id, scoped_query
+from app.services.pagination import like_pattern
+from app.services.assignee_service import apply_assignee, is_unassigned, resolve_assignee
 from app.services.notification_service import (
     notify_issue_created,
     notify_issue_status_changed,
+    notify_issue_assigned,
     notify_work_order_assigned,
 )
 from app.services.work_order_service import get_approval_threshold, needs_approval
@@ -94,6 +98,7 @@ def _issue_to_response(issue: Issue) -> IssueResponse:
 
     # Find auto-generated corrective work order (if any)
     wo_id = None
+    corrective = None
     if hasattr(issue, "work_orders") and issue.work_orders:
         corrective = next(
             (w for w in issue.work_orders
@@ -102,6 +107,8 @@ def _issue_to_response(issue: Issue) -> IssueResponse:
         )
         if corrective:
             wo_id = str(corrective.id)
+    card_wo = corrective or (issue.work_orders[0] if getattr(issue, "work_orders", None) else None)
+    appr = issue.approval
 
     return IssueResponse(
         id=str(issue.id),
@@ -113,13 +120,24 @@ def _issue_to_response(issue: Issue) -> IssueResponse:
         priority=issue.priority.value if hasattr(issue.priority, "value") else str(issue.priority),
         status=status_value,
         assignee=issue.assignee or "Unassigned",
+        assigneeUserId=str(issue.assignee_user_id) if issue.assignee_user_id else None,
         dueDate=issue.due_date.isoformat() if issue.due_date else None,
         createdDate=issue.created_at.date().isoformat() if issue.created_at else date.today().isoformat(),
+        createdAt=issue.created_at.isoformat() if issue.created_at else None,
         slaBreach=sla_breach,
         taskIds=[str(t.id) for t in (issue.tasks or [])],
         approvalId=str(issue.approval.id) if issue.approval else None,
         workOrderId=wo_id,
         closureBlockers=[b.as_dict() for b in can_close_issue(issue).blockers],
+        readyToClose=is_ready_to_close(issue),
+        photoCount=len(issue.photos or []),
+        approval=IssueApprovalSummary(
+            id=str(appr.id), number=appr.number, status=_value(appr.status),
+            currentStepOrder=appr.current_step_order or 1, stepCount=max(len(appr.steps or []), 1),
+            escalated=bool(getattr(appr, "escalated", False)),
+        ) if appr is not None else None,
+        workOrder=IssueWorkOrderSummary(id=str(card_wo.id), number=card_wo.number, status=_value(card_wo.status))
+        if card_wo is not None else None,
     )
 
 
@@ -189,7 +207,8 @@ def _create_corrective_wo(
         description=req.description,
         priority=req.priority,
         status=wo_status,
-        assignee=req.assignee or "Unassigned",
+        assignee=issue.assignee,
+        assignee_user_id=issue.assignee_user_id,
         estimated_cost=req.estimatedCost,
         requires_approval=requires_approval,
     )
@@ -205,7 +224,7 @@ def _create_corrective_wo(
             title=_derived_title("Approval biaya: ", req.title),
             approval_type="maintenance",
             description=req.description,
-            requester=req.assignee or "Unassigned",
+            requester=issue.assignee,
             outlet=req.outlet,
             outlet_id=resolve_outlet_id(db, req.outlet),
             amount=int(req.estimatedCost) if req.estimatedCost is not None else None,
@@ -224,9 +243,14 @@ def create_issue(db: Session, req: CreateIssueRequest, commit: bool = True) -> I
     commit to the caller (e.g. a QA audit submit raising several Issues at once).
     """
     issue_number = _next_number(db, "ISS", "issue_number_sequences")
+    outlet_id = resolve_outlet_id(db, req.outlet)
+    # The assignee is a user when the picker sent one (Todo-Pilot §17); it flows
+    # to the generated Task and Work Order.
+    assignee_name, assignee_user_id = resolve_assignee(
+        db, user_id=req.assigneeUserId, name=req.assignee, outlet_id=outlet_id)
 
     # Determine initial status from assignee (mirrors frontend store logic)
-    is_assigned = req.assignee and req.assignee.lower() != "unassigned"
+    is_assigned = not is_unassigned(assignee_name)
     initial_status = IssueStatusEnum.assigned if is_assigned else IssueStatusEnum.open
 
     issue = Issue(
@@ -234,15 +258,17 @@ def create_issue(db: Session, req: CreateIssueRequest, commit: bool = True) -> I
         title=req.title,
         description=req.description,
         outlet=req.outlet,
-        outlet_id=resolve_outlet_id(db, req.outlet),
+        outlet_id=outlet_id,
         category=req.category,
         priority=req.priority,
         status=initial_status.value,
-        assignee=req.assignee or "Unassigned",
+        assignee=assignee_name,
+        assignee_user_id=assignee_user_id,
         due_date=_parse_date(req.dueDate),
     )
     db.add(issue)
     db.flush()  # get issue.id without committing
+    notify_issue_assigned(db, issue)   # the Task below inherits the assignee: one notice
     # A Guest Service issue always carries its guest case (Todo-Pilot §8).
     ensure_guest_case(db, issue)
 
@@ -258,10 +284,11 @@ def create_issue(db: Session, req: CreateIssueRequest, commit: bool = True) -> I
             description=req.description,
             status=task_status,
             priority=req.priority,
-            assignee=req.assignee or "Unassigned",
+            assignee=assignee_name,
+            assignee_user_id=assignee_user_id,
             due_date=_parse_date(req.dueDate),
             outlet=req.outlet,
-            outlet_id=resolve_outlet_id(db, req.outlet),
+            outlet_id=outlet_id,
         )
         db.add(task)
 
@@ -288,7 +315,7 @@ def create_issue(db: Session, req: CreateIssueRequest, commit: bool = True) -> I
             title=req.title,
             approval_type=get_approval_type(req.category),
             description=req.description,
-            requester=req.assignee or "Unassigned",
+            requester=issue.assignee,
             outlet=req.outlet,
             outlet_id=resolve_outlet_id(db, req.outlet),
             amount=req.approvalAmount,
@@ -307,13 +334,23 @@ def create_issue(db: Session, req: CreateIssueRequest, commit: bool = True) -> I
     return _issue_to_response(issue)
 
 
-def list_issues(
+def issues_query(
     db: Session,
     status: Optional[str] = None,
     category: Optional[str] = None,
     outlet: Optional[str] = None,
+    priority: Optional[str] = None,
+    q: Optional[str] = None,
     user=None,
-) -> List[IssueResponse]:
+    active: bool = False,
+    ready: bool = False,
+    late: bool = False,
+):
+    """Filtered, outlet-scoped Issues — unordered, for paging (Todo-Pilot §22).
+
+    active = not resolved/closed/cancelled · ready = "Siap ditutup", the same rule
+    as issue_closure_service.is_ready_to_close, in SQL · late = active and past due.
+    """
     # Outlet scoping (Tier 4.2b): callers pass the authenticated user.
     query = scoped_query(db, Issue, user) if user is not None else db.query(Issue)
     if status:
@@ -322,8 +359,49 @@ def list_issues(
         query = query.filter(Issue.category == category)
     if outlet:
         query = query.filter(Issue.outlet == outlet)
-    # Newest first
-    issues = query.order_by(Issue.created_at.desc()).all()
+    if priority:
+        query = query.filter(Issue.priority == priority)
+    if q and q.strip():
+        pattern = like_pattern(q)
+        query = query.filter(or_(Issue.number.ilike(pattern), Issue.title.ilike(pattern), Issue.outlet.ilike(pattern)))
+    if active or late:
+        query = query.filter(Issue.status.notin_(tuple(ISSUE_FINAL)))
+    if late:
+        query = query.filter(Issue.due_date.isnot(None), Issue.due_date < date.today())
+    if ready:
+        query = query.filter(ready_to_close_clause())
+    return query
+
+
+def ready_to_close_clause():
+    """SQL twin of issue_closure_service.is_ready_to_close: has derived records,
+    none of them still open, and the Issue is not closed/cancelled/waiting."""
+    from sqlalchemy import and_, exists, not_
+    from app.models.approval import ApprovalRequest
+    from app.models.asset import WorkOrder
+    from app.models.task import Task
+    from app.services.issue_closure_service import APPROVAL_TERMINAL, TASK_TERMINAL, WORK_ORDER_TERMINAL
+
+    task = exists().where(Task.issue_id == Issue.id)
+    wo = exists().where(WorkOrder.issue_id == Issue.id)
+    appr = exists().where(ApprovalRequest.issue_id == Issue.id)
+    open_task = exists().where(Task.issue_id == Issue.id, Task.status.notin_(tuple(TASK_TERMINAL)))
+    open_wo = exists().where(WorkOrder.issue_id == Issue.id, WorkOrder.status.notin_(tuple(WORK_ORDER_TERMINAL)))
+    open_appr = exists().where(ApprovalRequest.issue_id == Issue.id, ApprovalRequest.status.notin_(tuple(APPROVAL_TERMINAL)))
+    return and_(
+        Issue.status.notin_(("closed", "cancelled", "waiting")),
+        or_(task, wo, appr),
+        not_(open_task), not_(open_wo), not_(open_appr),
+    )
+
+
+# Newest first; id breaks ties so pages never overlap.
+ISSUE_ORDER = (Issue.created_at.desc(), Issue.id.desc())
+
+
+def list_issues(db: Session, status: Optional[str] = None, category: Optional[str] = None,
+                outlet: Optional[str] = None, user=None) -> List[IssueResponse]:
+    issues = issues_query(db, status, category, outlet, user=user).order_by(*ISSUE_ORDER).all()
     return [_issue_to_response(i) for i in issues]
 
 
@@ -371,8 +449,9 @@ def update_issue(db: Session, issue_id: str, req: UpdateIssueRequest,
         issue.title = req.title
     if req.description is not None:
         issue.description = req.description
-    if req.assignee is not None:
-        issue.assignee = req.assignee
+    if req.assigneeUserId is not None or req.assignee is not None:
+        if apply_assignee(db, issue, user_id=req.assigneeUserId, name=req.assignee):
+            notify_issue_assigned(db, issue)
     if req.priority is not None:
         issue.priority = req.priority
     if req.dueDate is not None:
@@ -391,7 +470,7 @@ def update_issue(db: Session, issue_id: str, req: UpdateIssueRequest,
             performed_by=actor,
         )
         notify_issue_status_changed(db, issue.number, issue.title, old_status, new_status, issue.id)
-    elif any(v is not None for v in [req.title, req.description, req.assignee, req.priority, req.dueDate]):
+    elif any(v is not None for v in [req.title, req.description, req.assignee, req.assigneeUserId, req.priority, req.dueDate]):
         write_audit(
             db,
             table_name="issues",
@@ -468,6 +547,23 @@ def cancel_issue(db: Session, issue: Issue, reason: Optional[str], actor: str) -
     issue.status = IssueStatusEnum.cancelled.value
     _audit_status(db, issue, old_status, "cancelled", actor, reason=reason or "")
 
+    db.commit()
+    db.refresh(issue)
+    return _issue_to_response(issue)
+
+
+def close_ready_issue(db: Session, issue: Issue, actor: str) -> IssueResponse:
+    """Close one "Siap ditutup" Issue (bulk close, Todo-Pilot §18). Commits.
+
+    Raises ValueError (nothing written) when the Issue is not ready to close.
+    """
+    if not is_ready_to_close(issue):
+        blockers = can_close_issue(issue)
+        raise ValueError(blockers.message() if blockers.blockers
+                         else f"Not ready to close (status {_value(issue.status)}).")
+    old_status = _value(issue.status)
+    issue.status = IssueStatusEnum.closed.value
+    _audit_status(db, issue, old_status, "closed", actor, reason="bulk_close")
     db.commit()
     db.refresh(issue)
     return _issue_to_response(issue)

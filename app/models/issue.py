@@ -36,6 +36,8 @@ class Issue(TenantScoped, Base):
     priority = Column(_sa_enum(PriorityEnum, "priority"), nullable=False, default=PriorityEnum.medium)
     status = Column(_sa_enum(IssueStatusEnum, "issue_status"), nullable=False, default=IssueStatusEnum.open)
     assignee = Column(String(200), default="Unassigned")
+    # The assigned user (migration 041, Todo-Pilot §17); `assignee` keeps the name for display.
+    assignee_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     due_date = Column(Date)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -51,6 +53,14 @@ class Issue(TenantScoped, Base):
         back_populates="issue",
         cascade="all, delete-orphan",
         uselist=False,
+        lazy="selectin",
+    )
+    # Photos taken when the problem was reported (Todo-Pilot §20).
+    photos = relationship(
+        "IssuePhoto",
+        back_populates="issue",
+        cascade="all, delete-orphan",
+        order_by="IssuePhoto.created_at",
         lazy="selectin",
     )
     # Guest side of a "Guest Service" issue (Todo-Pilot §8); None for other categories.

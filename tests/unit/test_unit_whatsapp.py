@@ -59,6 +59,7 @@ def test_required_events_covered():
     assert set(WA_EVENT_PREFS) == {
         "approval_pending", "approval_escalated", "approval_decided",
         "work_order_assigned", "issue_ready_to_close",
+        "outlet_digest",   # GM summary, opt-in (Todo-Pilot §25)
     }
 
 

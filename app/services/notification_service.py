@@ -18,9 +18,10 @@ from typing import List, Optional, Protocol
 
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.notification import Notification
 from app.models.user import User
+from app.services.deep_link import record_url
+from app.services.notification_texts import L, Text, pick, recipient_language, status_label, status_text
 from app.services.email_service import queue_email
 from app.services.whatsapp_service import format_body, queue_whatsapp
 
@@ -35,6 +36,7 @@ EMAIL_EVENT_PREFS = {
     "approval_escalated":  "emailApprovalEscalated",
     "approval_decided":    "emailApprovalDecided",
     "work_order_assigned": "emailWorkOrderAssigned",
+    "outlet_digest":       "emailOutletDigest",   # sent only to users who opted in (Todo-Pilot §25)
 }
 
 
@@ -45,11 +47,14 @@ def wants_email(preferences: Optional[dict], event: Optional[str]) -> bool:
     return bool((preferences or {}).get(EMAIL_EVENT_PREFS[event], True))
 
 
-def _email_body(message: str) -> str:
+def _email_body(message: str, entity_type: Optional[str] = None, entity_id=None, language: str = "id") -> str:
     lines = [message]
-    if settings.APP_URL:
-        lines += ["", f"Buka RestaurantOps: {settings.APP_URL.rstrip('/')}"]
-    lines += ["", "—", "Email otomatis dari RestaurantOps. Atur notifikasi email di menu Settings."]
+    link = record_url(entity_type, entity_id)
+    if link:
+        lines += ["", f"{'Buka RestaurantOps' if language == 'id' else 'Open RestaurantOps'}: {link}"]
+    lines += ["", "—", "Email otomatis dari RestaurantOps. Atur notifikasi email di menu Pengaturan."
+              if language == "id" else
+              "Automatic email from RestaurantOps. Manage email notifications in Settings."]
     return "\n".join(lines)
 
 
@@ -59,8 +64,10 @@ def _email_body(message: str) -> str:
 
 @dataclass(frozen=True)
 class OutgoingNotification:
-    title: str
-    message: str
+    # Text = one string, or both languages via notification_texts.L(); each
+    # channel renders it in the recipient's language (Todo-Pilot §16).
+    title: Text
+    message: Text
     ntype: str = "info"
     entity_type: Optional[str] = None
     entity_id: object = None
@@ -75,8 +82,8 @@ class InAppChannel:
     def deliver(self, db: Session, user: User, note: OutgoingNotification) -> None:
         db.add(Notification(
             user_id=user.id,
-            title=note.title,
-            message=note.message,
+            title=pick(note.title, user),
+            message=pick(note.message, user),
             type=note.ntype,
             entity_type=note.entity_type,
             entity_id=note.entity_id,
@@ -86,13 +93,15 @@ class InAppChannel:
 class EmailChannel:
     def deliver(self, db: Session, user: User, note: OutgoingNotification) -> None:
         if note.event and wants_email(user.preferences, note.event):
-            queue_email(db, user.email, f"[RestaurantOps] {note.title}", _email_body(note.message))
+            queue_email(db, user.email, f"[RestaurantOps] {pick(note.title, user)}",
+                        _email_body(pick(note.message, user), note.entity_type, note.entity_id, recipient_language(user)))
 
 
 class WhatsAppChannel:
     def deliver(self, db: Session, user: User, note: OutgoingNotification) -> None:
         if note.event:   # preferences, dedup and rate limit are checked in queue_whatsapp
-            queue_whatsapp(db, user, note.event, format_body(note.title, note.message),
+            queue_whatsapp(db, user, note.event,
+                           format_body(pick(note.title, user), pick(note.message, user), note.entity_type, note.entity_id),
                            note.entity_type, note.entity_id)
 
 
@@ -102,8 +111,8 @@ CHANNELS: List[NotificationChannel] = [InAppChannel(), EmailChannel(), WhatsAppC
 def _create(
     db: Session,
     user: User,
-    title: str,
-    message: str,
+    title: Text,
+    message: Text,
     ntype: str = "info",
     entity_type: Optional[str] = None,
     entity_id=None,
@@ -117,8 +126,8 @@ def _create(
 def notify_roles(
     db: Session,
     roles: List[str],
-    title: str,
-    message: str,
+    title: Text,
+    message: Text,
     ntype: str = "info",
     entity_type: Optional[str] = None,
     entity_id=None,
@@ -153,8 +162,8 @@ def notify_roles(
 def notify_by_name(
     db: Session,
     name: str,
-    title: str,
-    message: str,
+    title: Text,
+    message: Text,
     ntype: str = "info",
     entity_type: Optional[str] = None,
     entity_id=None,
@@ -177,8 +186,8 @@ def notify_issue_created(db: Session, issue_number: str, title: str, outlet: str
     notify_roles(
         db,
         roles=["manager", "admin"],
-        title=f"New Issue: {issue_number}",
-        message=f'"{title}" reported at {outlet}.',
+        title=L(f"Laporan baru: {issue_number}", f"New issue: {issue_number}"),
+        message=L(f'"{title}" dilaporkan di {outlet}.', f'"{title}" reported at {outlet}.'),
         ntype="info",
         entity_type="issues",
         entity_id=issue_id,
@@ -193,8 +202,10 @@ def notify_issue_status_changed(
     notify_roles(
         db,
         roles=["manager", "admin"],
-        title=f"Issue {issue_number} → {new_status}",
-        message=f'"{title}" changed from {old_status} to {new_status}.',
+        title=L(f"Laporan {issue_number} → {status_label(new_status, 'id')}",
+                f"Issue {issue_number} → {status_label(new_status, 'en')}"),
+        message=L(f'"{title}" berubah dari {status_label(old_status, "id")} menjadi {status_label(new_status, "id")}.',
+                  f'"{title}" changed from {status_label(old_status, "en")} to {status_label(new_status, "en")}.'),
         ntype=ntype,
         entity_type="issues",
         entity_id=issue_id,
@@ -218,8 +229,9 @@ def notify_next_approver(
     (Tier 2.3) or is delegated. `issue_number` may be any subject label (a
     purchase-request approval has no issue).
     """
-    title = f"Approval menunggu Anda: {approval_number}"
-    message = f"Langkah approval untuk {issue_number} menunggu keputusan Anda."
+    title = L(f"Persetujuan menunggu Anda: {approval_number}", f"Approval waiting for you: {approval_number}")
+    message = L(f"Langkah persetujuan untuk {issue_number} menunggu keputusan Anda.",
+                f"An approval step for {issue_number} is waiting for your decision.")
 
     if approver_user_id is not None:
         user = db.query(User).filter(User.id == approver_user_id, User.is_active == True).first()  # noqa: E712
@@ -249,14 +261,15 @@ def notify_approval_decided(
     approval_id,
 ) -> None:
     ntype = "success" if decision == "approved" else "critical"
-    label = "Approved" if decision == "approved" else "Rejected"
+    label = status_text(decision)
 
     # Notify the requester (best-effort by name)
     notify_by_name(
         db,
         name=requester_name,
-        title=f"Approval {label}: {approval_number}",
-        message=f"Your request linked to {issue_number} was {decision}.",
+        title=L(f"Persetujuan {label['id'].lower()}: {approval_number}", f"Approval {label['en'].lower()}: {approval_number}"),
+        message=L(f"Permintaan Anda untuk {issue_number} {label['id'].lower()}.",
+                  f"Your request linked to {issue_number} was {label['en'].lower()}."),
         ntype=ntype,
         entity_type="approvals",
         entity_id=approval_id,
@@ -266,29 +279,75 @@ def notify_approval_decided(
     notify_roles(
         db,
         roles=["manager", "admin"],
-        title=f"Approval {label}: {approval_number}",
-        message=f"Request linked to {issue_number} was {decision} by approver.",
+        title=L(f"Persetujuan {label['id'].lower()}: {approval_number}", f"Approval {label['en'].lower()}: {approval_number}"),
+        message=L(f"Permintaan untuk {issue_number} {label['id'].lower()} oleh penyetuju.",
+                  f"Request linked to {issue_number} was {label['en'].lower()} by the approver."),
         ntype=ntype,
         entity_type="approvals",
         entity_id=approval_id,
     )
 
 
-def notify_work_order_assigned(db: Session, wo) -> None:
-    """Notify the assignee of a work order (matched by display name).
+def notify_user(
+    db: Session,
+    user_id,
+    title: Text,
+    message: Text,
+    ntype: str = "info",
+    entity_type: Optional[str] = None,
+    entity_id=None,
+    event: Optional[str] = None,
+) -> None:
+    """Notify one user by id (assignees — Todo-Pilot §17). Inactive/unknown: nobody."""
+    if not user_id:
+        return
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()  # noqa: E712
+    if user:
+        _create(db, user, title, message, ntype, entity_type, entity_id, event)
 
-    The WO assignee is a free-text name, so this is best-effort like
-    notify_by_name: no matching active user, no notification.
+
+def notify_work_order_assigned(db: Session, wo) -> None:
+    """Notify the assigned user of a work order (assignee_user_id, Todo-Pilot §17).
+
+    No longer matched by display name: an unlinked free-text assignee gets
+    nothing, and the UI says so.
     """
-    notify_by_name(
+    notify_user(
         db,
-        name=wo.assignee or "",
-        title=f"Work order ditugaskan: {wo.number}",
-        message=f'Anda ditugaskan ke "{wo.title}" ({wo.asset_name or "-"}, {wo.outlet or "-"}).',
+        wo.assignee_user_id,
+        title=L(f"Perintah kerja ditugaskan: {wo.number}", f"Work order assigned: {wo.number}"),
+        message=L(f'Anda ditugaskan ke "{wo.title}" ({wo.asset_name or "-"}, {wo.outlet or "-"}).',
+                  f'You were assigned "{wo.title}" ({wo.asset_name or "-"}, {wo.outlet or "-"}).'),
         ntype="info",
         entity_type="work_orders",
         entity_id=wo.id,
         event="work_order_assigned",
+    )
+
+
+def notify_issue_assigned(db: Session, issue) -> None:
+    """In-app: an Issue was assigned to a user (Todo-Pilot §17)."""
+    notify_user(
+        db,
+        issue.assignee_user_id,
+        title=L(f"Laporan ditugaskan: {issue.number}", f"Issue assigned: {issue.number}"),
+        message=L(f'Anda ditugaskan ke "{issue.title}" ({issue.outlet or "-"}).',
+                  f'You were assigned "{issue.title}" ({issue.outlet or "-"}).'),
+        entity_type="issues",
+        entity_id=issue.id,
+    )
+
+
+def notify_task_assigned(db: Session, task) -> None:
+    """In-app: a Task was assigned to a user. Links to its Issue (Tasks have no page of their own)."""
+    notify_user(
+        db,
+        task.assignee_user_id,
+        title=L(f"Tugas ditugaskan: {task.number}", f"Task assigned: {task.number}"),
+        message=L(f'Anda ditugaskan ke "{task.title}" ({task.outlet or "-"}).',
+                  f'You were assigned "{task.title}" ({task.outlet or "-"}).'),
+        entity_type="issues",
+        entity_id=task.issue_id,
     )
 
 
@@ -298,8 +357,9 @@ def notify_issue_ready_to_close(db: Session, issue) -> None:
     notify_roles(
         db,
         roles=["manager", "admin"],
-        title=f"Issue siap ditutup: {issue.number}",
-        message=f'Semua pekerjaan turunan "{issue.title}" sudah selesai. Tinjau dan tutup Issue ini.',
+        title=L(f"Laporan siap ditutup: {issue.number}", f"Issue ready to close: {issue.number}"),
+        message=L(f'Semua pekerjaan turunan "{issue.title}" sudah selesai. Tinjau dan tutup laporan ini.',
+                  f'All work under "{issue.title}" is finished. Review and close the issue.'),
         ntype="success",
         entity_type="issues",
         entity_id=issue.id,

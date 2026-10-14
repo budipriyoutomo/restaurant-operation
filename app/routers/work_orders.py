@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -33,8 +33,10 @@ from app.services import vendor_maintenance_service as vendor_svc
 from app.services import work_order_service as svc
 from app.services.audit_service import write_audit
 from app.services.notification_service import notify_work_order_assigned
+from app.services.assignee_service import apply_assignee
 from app.services.outlet_scope_service import assert_can_access, assert_can_write_outlet, resolve_outlet_id, scoped_query
 from app.services.auth_service import UserResponse, get_current_user, require_permission
+from app.services.pagination import Page, paginate
 from app.services.work_order_service import InvalidTransitionError
 
 router = APIRouter(prefix="/api/work-orders", tags=["cmms"])
@@ -77,13 +79,16 @@ def _get_wo_or_404(db: Session, wo_id: str, user=None) -> WorkOrder:
 
 @router.get("", response_model=List[WorkOrderResponse])
 def list_work_orders(
+    response: Response,
     asset_id: Optional[str] = Query(None),
     issue_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     outlet: Optional[str] = Query(None),
+    page: Page = Depends(),
     db: Session = Depends(get_db),
     current_user: UserResponse = Depends(require_permission("cmms", "view", ("assets", "view"))),
 ):
+    """Work orders, newest first; paged (Todo-Pilot §22)."""
     query = scoped_query(db, WorkOrder, current_user)
     if asset_id:
         query = query.filter(WorkOrder.asset_id == asset_id)
@@ -93,7 +98,8 @@ def list_work_orders(
         query = query.filter(WorkOrder.status == status)
     if outlet:
         query = query.filter(WorkOrder.outlet == outlet)
-    return [svc.wo_to_response(wo) for wo in query.order_by(WorkOrder.created_at.desc()).all()]
+    rows = paginate(query, page, response, WorkOrder.created_at.desc(), WorkOrder.id.desc())
+    return [svc.wo_to_response(wo) for wo in rows]
 
 
 @router.post("", response_model=WorkOrderResponse, status_code=201)
@@ -121,10 +127,10 @@ def create_work_order(
         title=req.title,
         description=req.description,
         priority=req.priority,
-        assignee=req.assignee,
         scheduled_date=_parse_date(req.scheduledDate),
         estimated_cost=req.estimatedCost,
     )
+    apply_assignee(db, wo, user_id=req.assigneeUserId, name=req.assignee)   # Todo-Pilot §17
     db.add(wo)
     db.flush()
     notify_work_order_assigned(db, wo)
@@ -158,9 +164,9 @@ def update_work_order(
 
     if req.status is not None:
         wo.status = req.status
-    if req.assignee is not None and req.assignee != wo.assignee:
-        wo.assignee = req.assignee
-        notify_work_order_assigned(db, wo)
+    if req.assigneeUserId is not None or (req.assignee is not None and req.assignee != wo.assignee):
+        if apply_assignee(db, wo, user_id=req.assigneeUserId, name=req.assignee):
+            notify_work_order_assigned(db, wo)
     if req.priority is not None:
         wo.priority = req.priority
     if req.scheduledDate is not None:
