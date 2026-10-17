@@ -130,7 +130,10 @@ def kpi_summary(cases: Iterable, target_minutes: int) -> dict:
 # DB
 # ---------------------------------------------------------------------------
 
-GUEST_CATEGORY = "Guest Service"
+# Guest complaints go to the system category of the guest_service module (P1);
+# any category in that module gets a guest case.
+GUEST_SYSTEM_KEY = "guest_service"
+GUEST_MODULE = "guest_service"
 _OPEN_EXCLUDED = {"resolved", "closed", "cancelled"}
 
 
@@ -159,7 +162,7 @@ def parse_reported_at(raw: Optional[str]) -> datetime:
 
 def ensure_case(db: Session, issue: Issue) -> Optional[GuestCase]:
     """Give a Guest Service issue its case (called by issue_service.create_issue)."""
-    if _v(issue.category) != GUEST_CATEGORY:
+    if issue.category_ref is None or issue.category_ref.module != GUEST_MODULE:
         return None
     case = GuestCase(issue_id=issue.id, outlet=issue.outlet, outlet_id=issue.outlet_id, reported_at=_now())
     db.add(case)

@@ -170,11 +170,14 @@ def test_company(db):
 @pytest.fixture(autouse=True)
 def seed_outlets(db, test_company):
     """Ensure the outlets referenced by tests exist in master data, along with
-    the default roles (users.role is a FK to roles since migration 031)."""
+    the default roles (users.role is a FK to roles since migration 031) and the
+    system issue categories (issues.category_id is a FK since migration 044)."""
     from app.models.outlet import Outlet
+    from app.services.category_service import ensure_system_categories
     from app.services.role_service import ensure_default_roles
 
     ensure_default_roles(db)
+    ensure_system_categories(db)
 
     for name, code in TEST_OUTLETS:
         if db.query(Outlet).filter(Outlet.name == name).first() is None:

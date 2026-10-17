@@ -109,6 +109,16 @@ def _guest_waiting(db: Session, user: UserResponse) -> List[Dict[str, Any]]:
              "reportedAt": _iso(c.reported_at)} for c in rows]
 
 
+def _ops_checklists(db: Session, user: UserResponse) -> List[Dict[str, Any]]:
+    """Today's checklists at my outlets still to fill in (Todo-Ops-Checklist Fase 1)."""
+    from app.services.ops_checklist_service import my_open_runs
+    return [{"id": str(r.id), "number": r.number, "templateName": r.template_name, "shift": r.shift,
+             "outlet": r.outlet, "status": r.status, "opensAt": _iso(r.opens_at), "dueAt": _iso(r.due_at),
+             "closesAt": _iso(r.closes_at), "answered": sum(1 for i in r.items if i.result),
+             "itemCount": len(r.items)}
+            for r in my_open_runs(db, user)]
+
+
 def my_work(db: Session, user: UserResponse, limit: int = 20) -> Dict[str, Any]:
     def gate(ok: bool, fn):
         return _section(fn(db, user), limit) if ok else None
@@ -119,4 +129,5 @@ def my_work(db: Session, user: UserResponse, limit: int = 20) -> Dict[str, Any]:
         "tasks":        gate(has_permission(user, "tasks"), _my_tasks),
         "readyToClose": gate(has_permission(user, "issues", "manage"), _ready_to_close),
         "guestWaiting": gate(has_permission(user, "guest-service"), _guest_waiting),
+        "opsChecklists": gate(has_permission(user, "ops"), _ops_checklists),
     }

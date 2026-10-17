@@ -20,12 +20,14 @@ from tests.conftest import seed_user_headers
 @pytest.fixture()
 def co(client, db, test_company):
     from app.services.role_service import ensure_default_roles
+    from app.services.category_service import ensure_system_categories
     with bypass_tenant(db):
         company = Company(name="PT Daftar", slug=f"daftar-{uuid.uuid4().hex[:6]}")
         db.add(company)
         db.flush()
     with tenant(db, company.id):
         ensure_default_roles(db)
+        ensure_system_categories(db)
         dago = Outlet(name="Dago", code="DGO", status="operational")
         riau = Outlet(name="Riau", code="RIA", status="operational")
         db.add_all([dago, riau])

@@ -19,6 +19,8 @@ load_dotenv()
 from app.core.tenancy import bypass_tenant, set_tenant
 from app.database import SessionLocal
 from app.models.company import Company
+from app.core.category_defaults import system_key_for_name
+from app.services.category_service import ensure_system_categories, system_category
 from app.services.role_service import ensure_default_roles
 from app.models.issue import Issue, IssueNumberSequence
 from app.models.task import Task, TaskNumberSequence
@@ -29,6 +31,7 @@ from app.models.pic import PIC
 from app.models.user import User
 from app.services.auth_service import hash_password
 from datetime import date
+from sqlalchemy import func
 import uuid
 
 
@@ -91,69 +94,58 @@ def run():
             print("  Outlets:    already present — skipped")
 
         # ------------------------------------------------------------------
-        # Categories — mirrors hardcoded master-data-page.tsx categoryMasterData
+        # Categories (P1: issue categories are master data). The system rows
+        # (Maintenance, Compliance, Training, …) come from ensure_system_categories
+        # — migration 044 has usually created them already; the rest are the
+        # demo's own categories, inserted when their name is still free.
         # ------------------------------------------------------------------
-        cat_ids = {
-            "operations":      uuid.UUID("55555555-0000-0000-0000-000000000001"),
-            "procurement":     uuid.UUID("55555555-0000-0000-0000-000000000002"),
-            "service_quality": uuid.UUID("55555555-0000-0000-0000-000000000003"),
-            "training":        uuid.UUID("55555555-0000-0000-0000-000000000004"),
-            "compliance":      uuid.UUID("55555555-0000-0000-0000-000000000005"),
-            "marketing":       uuid.UUID("55555555-0000-0000-0000-000000000006"),
-            "equipment":       uuid.UUID("55555555-0000-0000-0000-000000000007"),
-            "plumbing":        uuid.UUID("55555555-0000-0000-0000-000000000008"),
-            "electrical":      uuid.UUID("55555555-0000-0000-0000-000000000009"),
-            "hvac":            uuid.UUID("55555555-0000-0000-0000-000000000010"),
-        }
-        if db.query(Category).count() == 0:
-            categories = [
-                Category(id=cat_ids["operations"],      name="Operations",     description="Operational and scheduling issues",     type="operations"),
-                Category(id=cat_ids["procurement"],     name="Procurement",    description="Supply chain and inventory management", type="operations"),
-                Category(id=cat_ids["service_quality"], name="Service Quality",description="Customer service and quality issues",   type="operations"),
-                Category(id=cat_ids["training"],        name="Training",       description="Staff training and development",        type="operations"),
-                Category(id=cat_ids["compliance"],      name="Compliance",     description="Health and safety compliance",          type="operations"),
-                Category(id=cat_ids["marketing"],       name="Marketing",      description="Marketing and promotional activities",  type="operations"),
-                Category(id=cat_ids["equipment"],       name="Equipment",      description="Kitchen equipment maintenance",         type="maintenance"),
-                Category(id=cat_ids["plumbing"],        name="Plumbing",       description="Water and plumbing systems",            type="maintenance"),
-                Category(id=cat_ids["electrical"],      name="Electrical",     description="Electrical systems and lighting",       type="maintenance"),
-                Category(id=cat_ids["hvac"],            name="HVAC",           description="Heating, ventilation and cooling",      type="maintenance"),
-            ]
-            db.add_all(categories)
-            db.commit()
-            print(f"  Categories: {len(categories)} inserted")
-        else:
-            print("  Categories: already present — skipped")
+        ensure_system_categories(db)
+        demo_categories = [
+            (uuid.UUID("55555555-0000-0000-0000-000000000001"), "Operations",      "Operational and scheduling issues", "general"),
+            (uuid.UUID("55555555-0000-0000-0000-000000000003"), "Service Quality", "Customer service and quality issues", "general"),
+            (uuid.UUID("55555555-0000-0000-0000-000000000007"), "Equipment",       "Kitchen equipment maintenance",     "maintenance"),
+            (uuid.UUID("55555555-0000-0000-0000-000000000008"), "Plumbing",        "Water and plumbing systems",        "maintenance"),
+            (uuid.UUID("55555555-0000-0000-0000-000000000009"), "Electrical",      "Electrical systems and lighting",   "maintenance"),
+            (uuid.UUID("55555555-0000-0000-0000-000000000010"), "HVAC",            "Heating, ventilation and cooling",  "maintenance"),
+        ]
+        inserted = 0
+        for cid, name, desc, module in demo_categories:
+            if db.query(Category).filter(func.lower(Category.name) == name.lower(),
+                                         Category.deleted_at.is_(None)).first() is None:
+                db.add(Category(id=cid, name=name, description=desc, module=module))
+                inserted += 1
+        db.commit()
+        print(f"  Categories: {inserted} inserted")
 
         # ------------------------------------------------------------------
         # PICs — query categories from DB so this works even if cats were
         # seeded in a prior run
         # ------------------------------------------------------------------
         if db.query(PIC).count() == 0:
-            def cat_objs(*keys):
-                ids = [cat_ids[k] for k in keys]
-                return db.query(Category).filter(Category.id.in_(ids)).all()
+            def cat_objs(*names):
+                return db.query(Category).filter(Category.name.in_(names), Category.deleted_at.is_(None)).all()
 
             pic_objs = [
                 PIC(id=uuid.UUID("66666666-0000-0000-0000-000000000001"),
                     name="Ahmad Razif", email="ahmad.razif@restaurant.com",
                     phone="+60 12-3456 7890", department="Engineering",
-                    categories=cat_objs("equipment", "electrical", "hvac")),
+                    categories=cat_objs("Equipment", "Electrical", "HVAC")),
                 PIC(id=uuid.UUID("66666666-0000-0000-0000-000000000002"),
                     name="Raj Kumar", email="raj.kumar@restaurant.com",
                     phone="+60 11-2345 6789", department="Engineering",
-                    categories=cat_objs("equipment", "electrical", "plumbing")),
+                    categories=cat_objs("Equipment", "Electrical", "Plumbing")),
                 PIC(id=uuid.UUID("66666666-0000-0000-0000-000000000003"),
                     name="Lee Chong Wei", email="lee.cw@restaurant.com",
                     phone="+60 13-4567 8901", department="Operations",
-                    categories=cat_objs("compliance", "operations")),
+                    categories=cat_objs("Compliance", "Operations")),
                 PIC(id=uuid.UUID("66666666-0000-0000-0000-000000000004"),
                     name="Sarah Johnson", email="sarah.johnson@restaurant.com",
                     phone="+60 14-5678 9012", department="Operations",
-                    categories=cat_objs("training", "service_quality")),
+                    categories=cat_objs("Training", "Service Quality")),
                 PIC(id=uuid.UUID("66666666-0000-0000-0000-000000000005"),
                     name="Priya Sharma", email="priya.sharma@restaurant.com",
                     phone="+60 16-7890 1234", department="Supply Chain",
-                    categories=cat_objs("procurement")),
+                    categories=cat_objs("Procurement")),
             ]
             db.add_all(pic_objs)
             db.commit()
@@ -221,6 +213,8 @@ def run():
                   outlet="All Outlets", category="Marketing", priority="medium", status="open",
                   assignee="Unassigned", due_date=date(2026, 6, 10)),
         ]
+        for issue in issues:
+            issue.category_id = system_category(db, system_key_for_name(issue.category)).id
         db.add_all(issues)
         db.flush()
 

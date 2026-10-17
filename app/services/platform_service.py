@@ -28,6 +28,7 @@ from app.models.outlet import Outlet
 from app.models.user import User
 from app.services.audit_service import write_audit
 from app.services.auth_service import hash_password
+from app.services.category_service import ensure_system_categories
 from app.services.role_service import ensure_default_roles
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -118,6 +119,7 @@ def create_company(db: Session, req: CreateCompanyRequest, performed_by: str) ->
     password = req.admin_password or secrets.token_urlsafe(12)
     with tenant(db, company.id):
         ensure_default_roles(db)
+        ensure_system_categories(db)
         if req.outlet_name and req.outlet_name.strip():
             code = (req.outlet_code or slugify(req.outlet_name).replace("-", "")[:10]).upper()
             db.add(Outlet(name=req.outlet_name.strip(), code=code, status="operational"))

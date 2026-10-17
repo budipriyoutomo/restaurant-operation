@@ -72,7 +72,8 @@ class TestBudgetStatusPermission:
 
 
 class TestIssueEnumValidation:
-    @pytest.mark.parametrize("field,value", [("category", "maintenance"), ("priority", "urgent")])
+    # Category names are master data, matched case-insensitively (P1): an unknown one is the 422.
+    @pytest.mark.parametrize("field,value", [("category", "Tidak Ada"), ("priority", "urgent")])
     def test_invalid_enum_is_422_not_500(self, client, admin, field, value):
         body = {"title": "X", "outlet": "Jakarta", "category": "Maintenance", "priority": "low", field: value}
         res = client.post("/api/issues", json=body, headers=admin)

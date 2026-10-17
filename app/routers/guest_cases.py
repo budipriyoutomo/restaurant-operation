@@ -21,6 +21,7 @@ from app.schemas.issue import CreateIssueRequest
 from app.services import guest_service as svc
 from app.services import idempotency_service
 from app.services.auth_service import UserResponse, require_permission
+from app.services.category_service import system_category
 from app.services.issue_service import create_issue
 from app.services.outlet_scope_service import (
     assert_can_access, assert_can_write_outlet, resolve_outlet_id, scoped_query,
@@ -86,7 +87,7 @@ def create_case(
     reported_at = svc.parse_reported_at(req.reportedAt)
     issue = create_issue(db, CreateIssueRequest(
         title=req.title, description=req.description, outlet=req.outlet,
-        category=svc.GUEST_CATEGORY, priority=req.priority, assignee=req.assignee,
+        categoryId=str(system_category(db, svc.GUEST_SYSTEM_KEY).id), priority=req.priority, assignee=req.assignee,
         dueDate=req.dueDate, generateTask=True,
     ), commit=False)
     case = db.query(GuestCase).filter(GuestCase.issue_id == issue.id).one()

@@ -37,6 +37,7 @@ from app.schemas.qa_audit import (
     PhotoResponse, ScoresResponse, TemplateItemResponse, TemplateResponse, TrendPoint,
 )
 from app.services.audit_service import write_audit
+from app.services.category_service import system_category
 
 RESULTS = ("pass", "fail", "na")
 
@@ -271,6 +272,7 @@ def submit_audit(db: Session, s: QAAuditSession, actor: str) -> AuditDetailRespo
         })
 
     failed = [f for f in s.findings if f.result == "fail"]
+    compliance_id = str(system_category(db, "compliance").id) if failed else None
     repeats = find_repeats({f.template_item_id for f in failed if f.template_item_id},
                            _previous_failed_items(db, s))
     for f in failed:
@@ -287,7 +289,7 @@ def submit_audit(db: Session, s: QAAuditSession, actor: str) -> AuditDetailRespo
             title=f"{prefix}[Audit] {f.title}"[:500],
             description=description,
             outlet=s.outlet,
-            category="Compliance",
+            categoryId=compliance_id,
             priority=priority,
             assignee="Unassigned",
             dueDate=(date.today() + timedelta(days=_DUE_DAYS[priority])).isoformat(),

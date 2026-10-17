@@ -21,6 +21,7 @@ def _to_response(outlet: Outlet) -> OutletResponse:
         code=outlet.code,
         status=outlet.status.value if hasattr(outlet.status, "value") else str(outlet.status),
         approvalThreshold=outlet.approval_threshold,
+        timezone=outlet.timezone or "Asia/Jakarta",
         approvalThresholdDefault=APPROVAL_THRESHOLD,
     )
 
@@ -43,7 +44,7 @@ def create_outlet(req: CreateOutletRequest, db: Session = Depends(get_db), _: Us
     if existing:
         raise HTTPException(status_code=409, detail=f"Outlet code '{req.code.upper()}' already exists")
     outlet = Outlet(name=req.name, code=req.code.upper(), status=req.status,
-                    approval_threshold=req.approvalThreshold)
+                    approval_threshold=req.approvalThreshold, timezone=req.timezone)
     db.add(outlet)
     db.flush()
     write_audit(db, table_name="outlets", record_id=str(outlet.id), action="create",
@@ -77,6 +78,8 @@ def update_outlet(outlet_id: str, req: UpdateOutletRequest, db: Session = Depend
         outlet.status = req.status
     if "approvalThreshold" in req.model_fields_set:   # null clears the override
         outlet.approval_threshold = req.approvalThreshold
+    if req.timezone is not None:
+        outlet.timezone = req.timezone
     write_audit(db, table_name="outlets", record_id=str(outlet.id), action="update",
                 old_value=old,
                 new_value={"name": outlet.name, "code": outlet.code, "status": str(outlet.status),

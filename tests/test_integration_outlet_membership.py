@@ -156,14 +156,16 @@ class TestReferentialIntegrity:
         """Before 024 an outlet was a free string; a typo created an orphan row.
         Now the FK refuses it."""
         from app.models.issue import Issue
+        from app.services.category_service import system_category
 
+        cat = system_category(db, "maintenance")
         # SAVEPOINT: the failed INSERT must be unwound without rolling back the
         # per-test transaction that conftest owns.
         nested = db.begin_nested()
         db.add(Issue(
             number="ISS-FK-TEST", title="bad outlet", outlet="Typo Outlet",
             outlet_id="00000000-0000-0000-0000-000000000000",
-            category="Maintenance", priority="medium", status="open",
+            category=cat.name, category_id=cat.id, priority="medium", status="open",
         ))
         with pytest.raises(IntegrityError):
             db.flush()

@@ -29,12 +29,14 @@ def alpha(client, db, test_company):
 def beta(client, db, test_company, alpha):
     from app.models.outlet import Outlet
     from app.services.role_service import ensure_default_roles
+    from app.services.category_service import ensure_system_categories
     with bypass_tenant(db):
         company = Company(name="PT Beta", slug=f"beta-{uuid.uuid4().hex[:6]}")
         db.add(company)
         db.flush()
     with tenant(db, company.id):
         ensure_default_roles(db)
+        ensure_system_categories(db)
         outlet = Outlet(name="Beta Dago", code="BDG", status="operational")
         db.add(outlet)
         db.flush()

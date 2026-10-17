@@ -32,6 +32,7 @@ from app.models.user import User
 def companies(db):
     """Two extra companies, each with one outlet and the default roles."""
     from app.services.role_service import ensure_default_roles
+    from app.services.category_service import ensure_system_categories
     with bypass_tenant(db):
         a = Company(name="PT Alpha", slug=f"alpha-{uuid.uuid4().hex[:6]}")
         b = Company(name="PT Beta", slug=f"beta-{uuid.uuid4().hex[:6]}")
@@ -40,13 +41,16 @@ def companies(db):
     for c, name in ((a, "Alpha Senayan"), (b, "Beta Dago")):
         with tenant(db, c.id):
             ensure_default_roles(db)
+            ensure_system_categories(db)
             db.add(Outlet(name=name, code="SNY", status="operational"))   # same code in both: allowed
             db.flush()
     return a, b
 
 
-def _issue(title, outlet, number):
-    return Issue(number=number, title=title, description="", outlet=outlet, category="Maintenance",
+def _issue(db, title, outlet, number):
+    from app.services.category_service import system_category
+    cat = system_category(db, "maintenance")    # the current company's
+    return Issue(number=number, title=title, description="", outlet=outlet, category=cat.name, category_id=cat.id,
                  priority="medium", status="open", assignee="Unassigned")
 
 
@@ -104,7 +108,7 @@ class TestReads:
         a, b = companies
         for c, outlet in ((a, "Alpha Senayan"), (b, "Beta Dago")):
             with tenant(db, c.id):
-                db.add(_issue("Kompor", outlet, "ISS-T-1"))
+                db.add(_issue(db, "Kompor", outlet, "ISS-T-1"))
                 db.flush()
         with tenant(db, a.id):
             assert db.query(func.count(Issue.id)).scalar() == 1

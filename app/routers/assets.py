@@ -58,6 +58,9 @@ def _to_response(asset: Asset) -> AssetResponse:
         purchaseCost=asset.purchase_cost,
         qrToken=asset.qr_token,
         createdAt=asset.created_at.isoformat() if asset.created_at else "",
+        tempMonitored=bool(asset.temp_monitored),
+        tempMin=float(asset.temp_min) if asset.temp_min is not None else None,
+        tempMax=float(asset.temp_max) if asset.temp_max is not None else None,
     )
 
 
@@ -95,6 +98,9 @@ def create_asset(req: CreateAssetRequest, db: Session = Depends(get_db), current
         last_pm=_parse_date(req.lastPM),
         next_pm=_parse_date(req.nextPM),
         purchase_cost=req.purchaseCost,
+        temp_monitored=req.tempMonitored,
+        temp_min=req.tempMin,
+        temp_max=req.tempMax,
     )
     db.add(asset)
     db.flush()
@@ -177,6 +183,15 @@ def update_asset(asset_id: str, req: UpdateAssetRequest, db: Session = Depends(g
         asset.next_pm = _parse_date(req.nextPM)
     if req.purchaseCost is not None:
         asset.purchase_cost = req.purchaseCost
+    sent = req.model_fields_set
+    if req.tempMonitored is not None:
+        asset.temp_monitored = req.tempMonitored
+    if "tempMin" in sent:
+        asset.temp_min = req.tempMin
+    if "tempMax" in sent:
+        asset.temp_max = req.tempMax
+    if asset.temp_min is not None and asset.temp_max is not None and float(asset.temp_min) >= float(asset.temp_max):
+        raise HTTPException(status_code=422, detail="tempMin must be below tempMax")
 
     write_audit(db, table_name="assets", record_id=str(asset.id), action="update",
                 old_value=old,

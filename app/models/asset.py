@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import BigInteger, Column, String, Date, Text, Integer, Boolean, Numeric, Enum as SAEnum, TIMESTAMP, ForeignKey, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, Column, String, Date, Text, Integer, Boolean, Numeric, Enum as SAEnum, TIMESTAMP, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -20,7 +20,10 @@ def _sa_enum(py_enum, pg_name):
 
 class Asset(TenantScoped, Base):
     __tablename__ = "assets"
-    __table_args__ = (UniqueConstraint("company_id", "number", name="uq_assets_company_number"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "number", name="uq_assets_company_number"),
+        CheckConstraint("temp_min IS NULL OR temp_max IS NULL OR temp_min < temp_max", name="assets_temp_range_check"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     number = Column(String(30), nullable=False)      # AST-2026-00001
@@ -40,6 +43,11 @@ class Asset(TenantScoped, Base):
     purchase_cost = Column(BigInteger, nullable=True)                # IDR integer — for repair-vs-replace (migration 017)
     qr_token = Column(String(40), nullable=False, unique=True,    # opaque sticker token (migration 026)
                       default=lambda: uuid.uuid4().hex)
+    # Food safety temperature monitoring (Todo-Ops-Checklist Fase 2, migration 048):
+    # chillers/freezers whose readings are logged; limits in °C, inclusive.
+    temp_monitored = Column(Boolean, nullable=False, default=False, server_default="false")
+    temp_min = Column(Numeric(6, 1), nullable=True)
+    temp_max = Column(Numeric(6, 1), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

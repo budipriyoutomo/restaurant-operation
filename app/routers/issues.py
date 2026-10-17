@@ -13,14 +13,16 @@ from app.schemas.issue import (
     BulkCloseRequest,
     BulkCloseResponse,
     CancelIssueRequest,
+    CreateIssueCommentRequest,
     CreateIssueRequest,
+    IssueCommentResponse,
     IssuePhotoResponse,
     IssueResponse,
     ReopenIssueRequest,
     ReviseApprovalRequest,
     UpdateIssueRequest,
 )
-from app.services import idempotency_service, issue_service, storage_service
+from app.services import idempotency_service, issue_comment_service, issue_service, storage_service
 from app.models.issue_photo import IssuePhoto
 from app.services.audit_service import write_audit
 from app.services.auth_service import UserResponse, get_current_user, require_permission
@@ -69,6 +71,7 @@ def list_issues(
     response: Response,
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
+    module: Optional[str] = Query(None, description="Category module, e.g. maintenance — spans every category in it"),
     outlet: Optional[str] = Query(None),
     priority: Optional[str] = Query(None),
     q: Optional[str] = Query(None, description="Search number, title or outlet"),
@@ -81,7 +84,7 @@ def list_issues(
 ):
     """List Issues with optional filters; `limit`/`offset` page it (Todo-Pilot §22)."""
     query = issue_service.issues_query(db, status, category, outlet, priority, q, user=current_user,
-                                       active=active, ready=ready, late=late)
+                                       active=active, ready=ready, late=late, module=module)
     return [issue_service._issue_to_response(i) for i in paginate(query, page, response, *issue_service.ISSUE_ORDER)]
 
 
@@ -179,6 +182,35 @@ def revise_approval(
 # ---------------------------------------------------------------------------
 # Photos (Todo-Pilot §20 / UX-7) — same pipeline as work-order photos
 # ---------------------------------------------------------------------------
+
+@router.get("/{issue_id}/comments", response_model=List[IssueCommentResponse])
+def list_issue_comments(issue_id: str, db: Session = Depends(get_db), current_user: UserResponse = Depends(_ISSUE_VIEW)):
+    """Comments on an Issue, oldest first (Todo-Ops-Checklist P3)."""
+    return issue_comment_service.list_comments(db, _get_issue_or_404(db, issue_id, current_user))
+
+
+@router.post("/{issue_id}/comments", response_model=IssueCommentResponse, status_code=201)
+def add_issue_comment(
+    issue_id: str,
+    req: CreateIssueCommentRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(_ISSUE_VIEW),
+    idempotency_key: Optional[str] = Header(None),
+):
+    """Comment on an Issue. Anyone who may see it may comment; the assignee is
+    notified. Idempotent for the offline queue."""
+    cached = idempotency_service.get_cached(db, idempotency_key, current_user.id, request)
+    if cached is not None:
+        return cached
+    issue = _get_issue_or_404(db, issue_id, current_user)
+    comment = issue_comment_service.add_comment(
+        db, issue, req.body, kind="user", author_user_id=current_user.id, author_name=current_user.name,
+        actor=current_user.email)
+    resp = issue_comment_service.to_response(comment)
+    idempotency_service.store(db, idempotency_key, current_user.id, request, 201, resp)
+    return resp
+
 
 def _photo_response(issue_id, p: IssuePhoto) -> IssuePhotoResponse:
     base = f"/api/issues/{issue_id}/photos/{p.id}"

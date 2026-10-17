@@ -9,6 +9,8 @@ class PICResponse(BaseModel):
     phone: str
     department: str
     categories: List[str]  # list of category UUIDs
+    userId: Optional[str] = None     # linked user account (P2) — routes the PIC's categories to them
+    userName: Optional[str] = None
 
 
 class CreatePICRequest(BaseModel):
@@ -17,6 +19,7 @@ class CreatePICRequest(BaseModel):
     phone: str
     department: str
     categories: List[str]  # category UUIDs
+    userId: Optional[str] = None
 
 
 class UpdatePICRequest(BaseModel):
@@ -25,3 +28,4 @@ class UpdatePICRequest(BaseModel):
     phone: Optional[str] = None
     department: Optional[str] = None
     categories: Optional[List[str]] = None
+    userId: Optional[str] = None     # send null to unlink

@@ -60,6 +60,8 @@ def test_required_events_covered():
         "approval_pending", "approval_escalated", "approval_decided",
         "work_order_assigned", "issue_ready_to_close",
         "outlet_digest",   # GM summary, opt-in (Todo-Pilot §25)
+        "temperature_excursion",   # food safety (Todo-Ops-Checklist Fase 2)
+        "ops_checklist_missed", "ops_checklist_due_soon",   # daily checklists (Fase 3)
     }
 
 

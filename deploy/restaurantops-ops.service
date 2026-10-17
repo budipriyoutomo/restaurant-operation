@@ -1,0 +1,30 @@
+[Unit]
+Description=RestaurantOps — generate daily ops checklists and lock missed ones
+Documentation=file:///opt/restaurantops/DOC.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# Adjust these three to match the deployment.
+User=restaurantops
+Group=restaurantops
+WorkingDirectory=/opt/restaurantops/backend
+
+EnvironmentFile=-/opt/restaurantops/backend/.env
+
+ExecStart=/opt/restaurantops/backend/venv/bin/python -m scripts.run_ops_checklists
+
+# Idempotent: a retry never creates a second run for the same schedule and date.
+Restart=on-failure
+RestartSec=60
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/restaurantops/backend
+
+[Install]
+WantedBy=multi-user.target

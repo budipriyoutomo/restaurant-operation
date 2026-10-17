@@ -14,19 +14,21 @@ from app.core.tenancy import bypass_tenant, tenant
 from app.models.company import Company
 from tests.conftest import seed_user_headers
 
-STEPS = ["outlets", "users", "masterData", "assets", "pm", "approvalPolicy"]
+STEPS = ["outlets", "users", "masterData", "assets", "pm", "opsChecklist", "approvalPolicy"]
 
 
 @pytest.fixture()
 def fresh(client, db, test_company):
     """A company exactly as the platform creates it: roles and one admin, nothing else."""
     from app.services.role_service import ensure_default_roles
+    from app.services.category_service import ensure_system_categories
     with bypass_tenant(db):
         company = Company(name="PT Baru", slug=f"baru-{uuid.uuid4().hex[:6]}")
         db.add(company)
         db.flush()
     with tenant(db, company.id):
         ensure_default_roles(db)
+        ensure_system_categories(db)
         admin = seed_user_headers(db, f"admin-{company.slug}@baru.test", "admin", name="Admin Baru")
     return {"company": company, "admin": admin}
 
@@ -54,7 +56,7 @@ def test_steps_follow_the_data(client, fresh):
     assert asset.status_code == 201, asset.text
 
     done = {s["key"]: s["done"] for s in _status(client, admin)["steps"]}
-    assert done == {"outlets": True, "users": False, "masterData": True, "assets": True, "pm": False, "approvalPolicy": False}
+    assert done == {"outlets": True, "users": False, "masterData": True, "assets": True, "pm": False, "opsChecklist": False, "approvalPolicy": False}
 
 
 def test_an_outlet_threshold_counts_as_an_approval_policy(client, fresh):

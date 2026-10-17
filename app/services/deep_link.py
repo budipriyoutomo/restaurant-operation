@@ -14,6 +14,7 @@ ENTITY_PATHS = {
     "issues":      "issues",
     "approvals":   "approvals",
     "work_orders": "work-orders",
+    "ops_checklists": "ops",      # Todo-Ops-Checklist Fase 3
 }
 
 

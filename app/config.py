@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     STORAGE_DIR: str = "./var/uploads"
     MAX_UPLOAD_MB: int = 10
 
+    # Food safety temperature escalation (Todo-Ops-Checklist Fase 2): this many
+    # excursions in a row on one asset, or one reading this many °C beyond a
+    # limit, raise a Maintenance issue + corrective work order.
+    TEMP_CONSECUTIVE_LIMIT: int = 2
+    TEMP_MAJOR_DELTA: float = 3.0
+    # IoT sensors (Fase 4): escalate once an excursion has lasted this long, and
+    # again at most this often while it lasts.
+    TEMP_SENSOR_SUSTAIN_MINUTES: int = 15
+    TEMP_SENSOR_REESCALATE_MINUTES: int = 60
+
     # Corrective work orders whose estimated cost (IDR) is above this need
     # approval. Per-outlet override: outlets.approval_threshold (migration 033).
     APPROVAL_THRESHOLD_DEFAULT: int = 1_000_000

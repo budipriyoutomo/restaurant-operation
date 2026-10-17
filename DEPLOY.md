@@ -122,6 +122,41 @@ a request is escalated once per stuck step. Check it with
 Without Docker, use the systemd units in `deploy/`
 (`restaurantops-escalate.{service,timer}`, same setup as the PM timer).
 
+### Daily ops checklist job
+`ops-checklist-scheduler` runs `scripts/run_ops_checklists` every 15 minutes.
+For every active schedule due today it creates today's run — "today" and the
+due time are the outlet's local time (`Outlets → Timezone`, default
+`Asia/Jakarta`; Bali = `Asia/Makassar`, Malaysia = `Asia/Kuala_Lumpur`) — and
+it locks runs whose window closed without a submit (`missed`). Idempotent: one
+run per schedule per shift date is a database constraint. Check it with
+`dc logs ops-checklist-scheduler`; for a demo, `Daily Ops → Jalankan sekarang`
+(`POST /api/ops-checklists/run-now`, ops:manage) does the same for one company.
+
+Without Docker, use `deploy/restaurantops-ops.{service,timer}` (every 15 minutes).
+
+Weekly and monthly schedules (deep cleaning, thermometer calibration) go
+through the same job: a run that opens days before its date is created once its
+window opens.
+
+To seed a pilot company with a built-in template set from the shell (the same
+sets are one click in onboarding):
+
+```bash
+dc exec backend python -m scripts.seed_ops_templates <company_slug> resto --outlet "Dago"
+```
+
+### IoT temperature sensors
+A manager adds a sensor in `CMMS → asset → Suhu → Sensor IoT` and gets its key
+once. The device posts to `POST /api/temperature-sensors/readings` with the
+header `X-Sensor-Key: rsk_…` and a body
+`{"readings": [{"value": -18.2, "recordedAt": "2026-10-16T03:00:00Z"}]}`
+(up to 500 per call, at most 24 hours old; retrying the same reading is
+ignored). There is no user behind the request: the key identifies the company.
+Escalation waits until an excursion has lasted `TEMP_SENSOR_SUSTAIN_MINUTES`
+(default 15) and repeats at most every `TEMP_SENSOR_REESCALATE_MINUTES`
+(default 60). The default rate limit (`RATE_LIMIT_DEFAULT`, per IP) also applies
+to sensors: send readings in batches when many devices share one connection.
+
 ### Outlet digest job
 `outlet-digest` runs `scripts/run_outlet_digest` every hour. Users who turned on
 the daily and/or weekly summary (Settings → Notifications) and can open the

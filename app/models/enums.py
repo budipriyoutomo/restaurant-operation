@@ -1,19 +1,6 @@
 import enum
 
 
-class IssueCategoryEnum(str, enum.Enum):
-    """Values match the frontend IssueCategory type exactly."""
-    maintenance = "Maintenance"
-    it_support = "IT Support"
-    compliance = "Compliance"
-    training = "Training"
-    procurement = "Procurement"
-    marketing = "Marketing"
-    asset_purchase = "Asset Purchase"
-    guest_service = "Guest Service"
-    other = "Other"
-
-
 class PriorityEnum(str, enum.Enum):
     """Values match the frontend Priority type exactly."""
     critical = "critical"
@@ -81,6 +68,7 @@ class OutletStatusEnum(str, enum.Enum):
 
 
 class CategoryTypeEnum(str, enum.Enum):
+    """Legacy categories.type — now derived from categories.module (P1); kept for the API."""
     operations = "operations"
     maintenance = "maintenance"
 

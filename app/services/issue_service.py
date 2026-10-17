@@ -12,9 +12,12 @@ from fastapi import HTTPException
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
-from app.core.category_defaults import get_approval_type
+from app.core.category_defaults import allows_work_order, approval_type_for
+from app.services.assignment_service import route_assignee
+from app.services.category_service import resolve_category
 from app.models.approval import ApprovalRequest, ApprovalNumberSequence
 from app.models.asset import Asset, WorkOrder, WorkOrderNumberSequence
+from app.models.category import Category
 from app.models.enums import IssueStatusEnum, PriorityEnum, TaskStatusEnum, WorkOrderStatusEnum
 from app.models.issue import Issue, IssueNumberSequence
 from app.models.task import Task, TaskNumberSequence
@@ -116,7 +119,9 @@ def _issue_to_response(issue: Issue) -> IssueResponse:
         title=issue.title,
         description=issue.description or "",
         outlet=issue.outlet,
-        category=issue.category.value if hasattr(issue.category, "value") else str(issue.category),
+        category=issue.category,
+        categoryId=str(issue.category_id) if issue.category_id else None,
+        categoryModule=issue.category_ref.module if issue.category_ref is not None else None,
         priority=issue.priority.value if hasattr(issue.priority, "value") else str(issue.priority),
         status=status_value,
         assignee=issue.assignee or "Unassigned",
@@ -242,12 +247,18 @@ def create_issue(db: Session, req: CreateIssueRequest, commit: bool = True) -> I
     in task/approval creation rolls back the issue too. commit=False leaves the
     commit to the caller (e.g. a QA audit submit raising several Issues at once).
     """
+    category = resolve_category(db, name=req.category, category_id=req.categoryId)
     issue_number = _next_number(db, "ISS", "issue_number_sequences")
     outlet_id = resolve_outlet_id(db, req.outlet)
     # The assignee is a user when the picker sent one (Todo-Pilot §17); it flows
-    # to the generated Task and Work Order.
+    # to the generated Task and Work Order. Nobody given → the routing rules
+    # (category × outlet, then the category's PIC) pick one (Todo-Ops-Checklist P2).
+    assignee_user = req.assigneeUserId
+    if not assignee_user and is_unassigned(req.assignee):
+        routed = route_assignee(db, category.id, outlet_id)
+        assignee_user = str(routed) if routed else None
     assignee_name, assignee_user_id = resolve_assignee(
-        db, user_id=req.assigneeUserId, name=req.assignee, outlet_id=outlet_id)
+        db, user_id=assignee_user, name=req.assignee, outlet_id=outlet_id)
 
     # Determine initial status from assignee (mirrors frontend store logic)
     is_assigned = not is_unassigned(assignee_name)
@@ -259,7 +270,9 @@ def create_issue(db: Session, req: CreateIssueRequest, commit: bool = True) -> I
         description=req.description,
         outlet=req.outlet,
         outlet_id=outlet_id,
-        category=req.category,
+        category=category.name,
+        category_id=category.id,
+        category_ref=category,
         priority=req.priority,
         status=initial_status.value,
         assignee=assignee_name,
@@ -297,7 +310,7 @@ def create_issue(db: Session, req: CreateIssueRequest, commit: bool = True) -> I
     # approval_requests.issue_id is UNIQUE — so the generic branch below has to
     # know one already exists.
     wo = None
-    if req.category == "Maintenance" and req.generateWorkOrder:
+    if allows_work_order(category.module) and req.generateWorkOrder:
         wo = _create_corrective_wo(db, issue, issue_number, req)
 
     # Auto-generate ApprovalRequest (FR-6). This used to skip Maintenance
@@ -313,7 +326,7 @@ def create_issue(db: Session, req: CreateIssueRequest, commit: bool = True) -> I
             issue_id=issue.id,
             issue_number=issue_number,
             title=req.title,
-            approval_type=get_approval_type(req.category),
+            approval_type=approval_type_for(category.approval_type),
             description=req.description,
             requester=issue.assignee,
             outlet=req.outlet,
@@ -345,6 +358,7 @@ def issues_query(
     active: bool = False,
     ready: bool = False,
     late: bool = False,
+    module: Optional[str] = None,
 ):
     """Filtered, outlet-scoped Issues — unordered, for paging (Todo-Pilot §22).
 
@@ -357,6 +371,10 @@ def issues_query(
         query = query.filter(Issue.status == status)
     if category:
         query = query.filter(Issue.category == category)
+    if module:
+        # Every category of that module (e.g. Maintenance + HVAC), whatever its name.
+        query = query.filter(Issue.category_id.in_(
+            db.query(Category.id).filter(Category.module == module)))
     if outlet:
         query = query.filter(Issue.outlet == outlet)
     if priority:

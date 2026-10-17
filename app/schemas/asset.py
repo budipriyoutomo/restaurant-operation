@@ -1,6 +1,6 @@
 from typing import Optional, List
 from decimal import Decimal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -24,6 +24,16 @@ class AssetResponse(BaseModel):
     purchaseCost: Optional[int] = None    # IDR integer
     qrToken: Optional[str] = None         # opaque sticker token (Tier 5.2)
     createdAt: str
+    # Food safety temperature monitoring (Todo-Ops-Checklist Fase 2), °C inclusive
+    tempMonitored: bool = False
+    tempMin: Optional[float] = None
+    tempMax: Optional[float] = None
+
+
+def _check_temp_range(m):
+    if m.tempMin is not None and m.tempMax is not None and m.tempMin >= m.tempMax:
+        raise ValueError("tempMin must be below tempMax")
+    return m
 
 
 class CreateAssetRequest(BaseModel):
@@ -38,6 +48,13 @@ class CreateAssetRequest(BaseModel):
     lastPM: Optional[str] = None
     nextPM: Optional[str] = None
     purchaseCost: Optional[int] = None
+    tempMonitored: bool = False
+    tempMin: Optional[float] = Field(default=None, ge=-99.9, le=999.9)
+    tempMax: Optional[float] = Field(default=None, ge=-99.9, le=999.9)
+
+    @model_validator(mode="after")
+    def check_temp(self):
+        return _check_temp_range(self)
 
 
 class UpdateAssetRequest(BaseModel):
@@ -52,6 +69,13 @@ class UpdateAssetRequest(BaseModel):
     lastPM: Optional[str] = None
     nextPM: Optional[str] = None
     purchaseCost: Optional[int] = None
+    tempMonitored: Optional[bool] = None
+    tempMin: Optional[float] = Field(default=None, ge=-99.9, le=999.9)   # send null to clear
+    tempMax: Optional[float] = Field(default=None, ge=-99.9, le=999.9)
+
+    @model_validator(mode="after")
+    def check_temp(self):
+        return _check_temp_range(self)
 
 
 class AssetHistoryResponse(BaseModel):

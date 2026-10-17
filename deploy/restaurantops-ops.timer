@@ -1,0 +1,15 @@
+[Unit]
+Description=RestaurantOps — run the daily ops checklist job every 15 minutes
+Documentation=file:///opt/restaurantops/DOC.md
+
+[Timer]
+# Checklist windows open and close at any time of day (and in several time
+# zones), so check often. Each run is cheap and idempotent.
+OnCalendar=*:0/15
+RandomizedDelaySec=30
+Persistent=true
+
+Unit=restaurantops-ops.service
+
+[Install]
+WantedBy=timers.target

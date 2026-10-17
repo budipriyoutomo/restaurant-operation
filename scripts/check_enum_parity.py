@@ -40,7 +40,6 @@ PAIRS: Dict[str, List[str]] = {
     "Priority":             ["app.models.enums:PriorityEnum", "app.schemas.guest_case:CreateGuestCaseRequest.priority"],
     "IssueStatus":          ["app.models.enums:IssueStatusEnum"],
     "TaskStatus":           ["app.models.enums:TaskStatusEnum"],
-    "IssueCategory":        ["app.models.enums:IssueCategoryEnum"],
     "ApprovalType":         ["app.models.enums:ApprovalTypeEnum"],
     "ApprovalStatus":       ["app.models.enums:ApprovalStatusEnum"],
     "ApprovalStepStatus":   ["app.models.enums:ApprovalStepStatusEnum"],
@@ -48,9 +47,13 @@ PAIRS: Dict[str, List[str]] = {
     "ApprovalTier":         ["app.models.enums:ApproverRoleEnum", "app.permissions:APPROVAL_TIERS"],
     "AccessLevel":          ["app.permissions:LEVELS"],
     "NotificationType":     ["app.services.notification_service:NOTIFICATION_TYPES"],
-    # Outlets / categories
+    "IssueCommentKind":     ["app.models.issue_comment:COMMENT_KINDS"],
+    # Outlets / categories (issue categories are master data since P1 — the
+    # category names are data; what is fixed is the module and the system keys)
     "OutletStatus":         ["app.models.enums:OutletStatusEnum"],
-    "CategoryType":         ["app.models.enums:CategoryTypeEnum"],
+    "CategoryType":         ["app.models.enums:CategoryTypeEnum", "app.schemas.category:CreateCategoryRequest.type"],
+    "CategoryModule":       ["app.core.category_defaults:CATEGORY_MODULES", "app.schemas.category:CategoryModule"],
+    "CategorySystemKey":    ["app.core.category_defaults:CATEGORY_SYSTEM_KEYS"],
     # CMMS
     "AssetStatus":          ["app.models.enums:AssetStatusEnum"],
     "WorkOrderType":        ["app.models.enums:WorkOrderTypeEnum"],
@@ -66,6 +69,14 @@ PAIRS: Dict[str, List[str]] = {
     "EnrollmentStatus":      ["app.services.training_service:ENROLLMENT_STATUSES"],
     "CampaignStatus":        ["app.models.campaign:Campaign.status", "app.routers.campaigns:VALID_STATUSES"],
     "CampaignType":          ["app.models.campaign:Campaign.type", "app.routers.campaigns:VALID_TYPES"],
+    # Daily ops checklist (Todo-Ops-Checklist Fase 1)
+    "OpsShift":              ["app.services.ops_checklist_rules:SHIFTS", "app.schemas.ops_checklist:Shift"],
+    "OpsItemType":           ["app.services.ops_checklist_rules:ITEM_TYPES", "app.schemas.ops_checklist:ItemType"],
+    "OpsResult":             ["app.services.ops_checklist_rules:RESULTS", "app.schemas.ops_checklist:OpsResult"],
+    "OpsRunStatus":          ["app.services.ops_checklist_rules:RUN_STATUSES", "app.schemas.ops_checklist:RunStatus"],
+    # Fase 4
+    "OpsScheduleFrequency":  ["app.services.ops_checklist_rules:FREQUENCIES", "app.schemas.ops_checklist:ScheduleFrequency"],
+    "TemperatureSource":     ["app.models.temperature_log:TEMPERATURE_SOURCES", "app.schemas.ops_checklist:TemperatureSource"],
     # QA / guest service
     "QAAuditResult":         ["app.services.qa_audit_service:RESULTS",
                               "app.schemas.qa_audit:UpdateFindingRequest.result"],

@@ -1,7 +1,7 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.models.enums import IssueCategoryEnum, PriorityEnum
+from app.models.enums import PriorityEnum
 from app.schemas.validators import in_enum
 
 # Matches the VARCHAR(500) title columns. Records derived from an Issue add a
@@ -40,6 +40,8 @@ class IssueResponse(BaseModel):
     description: str
     outlet: str
     category: str
+    categoryId: Optional[str] = None        # master-data category (Todo-Ops-Checklist P1)
+    categoryModule: Optional[str] = None    # behaviour of that category (maintenance, guest_service, …)
     priority: str
     status: str
     assignee: str
@@ -68,7 +70,10 @@ class CreateIssueRequest(BaseModel):
     title: str = Field(min_length=1, max_length=TITLE_MAX_LENGTH)
     description: str = ""
     outlet: str
-    category: str
+    # Master-data category (Todo-Ops-Checklist P1): by name, as before, or by id
+    # (wins). Existence and active state are checked by category_service (422).
+    category: Optional[str] = None
+    categoryId: Optional[str] = None
     priority: str
     assignee: str = "Unassigned"
     assigneeUserId: Optional[str] = None   # picker choice; wins over `assignee` (Todo-Pilot §17)
@@ -81,10 +86,11 @@ class CreateIssueRequest(BaseModel):
     assetId: Optional[str] = None
     estimatedCost: Optional[int] = None   # IDR integer
 
-    @field_validator("category")
-    @classmethod
-    def check_category(cls, v: str) -> str:
-        return in_enum(v, IssueCategoryEnum)
+    @model_validator(mode="after")
+    def check_category(self):
+        if not (self.categoryId or (self.category and self.category.strip())):
+            raise ValueError("category or categoryId is required")
+        return self
 
     @field_validator("priority")
     @classmethod
@@ -148,3 +154,33 @@ class IssuePhotoResponse(BaseModel):
     thumbnailUrl: str
     mimeType: Optional[str] = None
     createdAt: str
+
+
+# ── Comments (Todo-Ops-Checklist P3) ─────────────────────────────────────────
+
+COMMENT_MAX_LENGTH = 4000
+
+
+class IssueCommentResponse(BaseModel):
+    id: str
+    issueId: str
+    body: str
+    kind: str                         # user | system
+    authorUserId: Optional[str] = None
+    authorName: str
+    createdAt: str
+
+
+class CreateIssueCommentRequest(BaseModel):
+    """Only `body`: comments made through the API are always kind "user"."""
+    body: str
+
+    @field_validator("body")
+    @classmethod
+    def check_body(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("must not be empty")
+        if len(v) > COMMENT_MAX_LENGTH:
+            raise ValueError(f"must be at most {COMMENT_MAX_LENGTH} characters")
+        return v

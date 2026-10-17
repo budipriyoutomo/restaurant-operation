@@ -1,4 +1,4 @@
-"""Document numbers — ISS-2026-00001, TSK-, APR-, WO-, AST-, PR-, PO-, GRN-, AUD- (Todo-Pilot §11).
+"""Document numbers — ISS-2026-00001, TSK-, APR-, WO-, AST-, PR-, PO-, GRN-, AUD-, OPS- (Todo-Pilot §11).
 
 Counted per (company, year): every company starts at 00001, so one tenant's
 volume never shows in another's numbers. The single place that writes the
@@ -21,6 +21,7 @@ from app.core.tenancy import require_tenant
 _YEARLY = frozenset({
     "issue_number_sequences", "task_number_sequences", "approval_number_sequences",
     "work_order_number_sequences", "asset_number_sequences", "qa_audit_number_sequences",
+    "ops_checklist_number_sequences",
 })
 _PER_PREFIX = "procurement_number_sequences"      # PR / PO / GRN share one table
 

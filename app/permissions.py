@@ -53,6 +53,7 @@ MODULES: List[ModuleDef] = [
     {"key": "issues",        "label": "Issues",              "group": "Operations", "manageable": True},
     {"key": "tasks",         "label": "Tasks",               "group": "Operations", "manageable": False},
     {"key": "approvals",     "label": "Approvals",           "group": "Operations", "manageable": True},
+    {"key": "ops",           "label": "Daily Ops",           "group": "Operations", "manageable": True},   # view = fill checklists; manage = templates, schedules, review
     {"key": "maintenance",   "label": "Maintenance",         "group": "Modules",    "manageable": False},
     {"key": "qa",            "label": "QA & Compliance",     "group": "Modules",    "manageable": True},   # manage = run audits, edit templates
     {"key": "guest-service", "label": "Guest Service",       "group": "Modules",    "manageable": True},   # manage = record compensation
@@ -104,12 +105,12 @@ def full_access() -> Dict[str, str]:
 
 # Defaults reproduce the pre-031 hardcoded behaviour of staff/manager/admin.
 _STAFF_VIEW = [
-    "dashboard", "issues", "tasks", "approvals",
+    "dashboard", "issues", "tasks", "approvals", "ops",
     "maintenance", "qa", "guest-service", "it-support",
     "procurement", "vendors", "budgets", "training", "marketing", "assets", "cmms",
 ]
 _MANAGER_MANAGE = [
-    "issues", "approvals", "procurement", "vendors",
+    "issues", "approvals", "ops", "procurement", "vendors",
     "training", "marketing", "assets", "cmms", "qa", "guest-service",
 ]
 

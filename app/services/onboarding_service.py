@@ -1,8 +1,8 @@
 """Onboarding a new company (Todo-Pilot §24 / UX-11).
 
 The first admin sees what is left to set up, in this order: outlets → users &
-roles → categories & PICs → assets & QR → preventive maintenance → approval
-policy. A step is done when the data exists, so the checklist cannot drift
+roles → categories & PICs → assets & QR → preventive maintenance → daily
+checklists → approval policy. A step is done when the data exists, so the checklist cannot drift
 from reality. Optional demo data fills an empty company for a sales demo.
 
 Every query runs under the caller's tenant (TenantScoped), so another
@@ -20,11 +20,13 @@ from app.models.approval_policy import ApprovalPolicy
 from app.models.asset import Asset
 from app.models.category import Category
 from app.models.issue import Issue
+from app.models.ops_checklist import OpsChecklistTemplate
 from app.models.outlet import Outlet
 from app.models.pic import PIC
 from app.models.pm_schedule import PMSchedule
 from app.models.user import User
 from app.services.audit_service import write_audit
+from app.services.category_service import system_category
 
 DEMO = "[Demo] "
 
@@ -42,6 +44,7 @@ def status(db: Session, user_id=None) -> Dict[str, Any]:
     pm = _count(db, PMSchedule, PMSchedule.deleted_at.is_(None), PMSchedule.is_active.is_(True))
     policies = _count(db, ApprovalPolicy, ApprovalPolicy.deleted_at.is_(None), ApprovalPolicy.is_active.is_(True))
     thresholds = _count(db, Outlet, Outlet.deleted_at.is_(None), Outlet.approval_threshold.isnot(None))
+    ops_templates = _count(db, OpsChecklistTemplate, OpsChecklistTemplate.is_active.is_(True))
 
     steps: List[Dict[str, Any]] = [
         {"key": "outlets", "done": outlets > 0, "count": outlets},
@@ -51,6 +54,8 @@ def status(db: Session, user_id=None) -> Dict[str, Any]:
         # Every asset gets its QR sticker token on creation.
         {"key": "assets", "done": assets > 0, "count": assets},
         {"key": "pm", "done": pm > 0, "count": pm},
+        # Daily checklists — a built-in set per outlet type is one click (Todo-Ops-Checklist Fase 4).
+        {"key": "opsChecklist", "done": ops_templates > 0, "count": ops_templates},
         {"key": "approvalPolicy", "done": policies > 0 or thresholds > 0, "count": policies + thresholds},
     ]
     me = db.query(User).filter(User.id == user_id).first() if user_id else None
@@ -87,14 +92,17 @@ def create_demo_data(db: Session, performed_by: str) -> Dict[str, Any]:
     db.add(asset)
     db.flush()
 
+    def _cat(key: str) -> str:
+        return str(system_category(db, key).id)
+
     samples = [
-        dict(title=f"{DEMO}Freezer tidak dingin", category="Maintenance", priority="high",
+        dict(title=f"{DEMO}Freezer tidak dingin", categoryId=_cat("maintenance"), priority="high",
              description="Suhu freezer naik ke -5°C sejak pagi.", generateTask=False,
              generateWorkOrder=True, assetId=str(asset.id), estimatedCost=750_000),
-        dict(title=f"{DEMO}Beli mixer baru", category="Procurement", priority="medium",
+        dict(title=f"{DEMO}Beli mixer baru", categoryId=_cat("procurement"), priority="medium",
              description="Mixer lama sering mati.", generateTask=True, generateApproval=True,
              approvalAmount=4_500_000),
-        dict(title=f"{DEMO}Tamu mengeluh pesanan terlambat", category="Guest Service", priority="medium",
+        dict(title=f"{DEMO}Tamu mengeluh pesanan terlambat", categoryId=_cat("guest_service"), priority="medium",
              description="Pesanan meja 7 datang 40 menit.", generateTask=True),
     ]
     created = []

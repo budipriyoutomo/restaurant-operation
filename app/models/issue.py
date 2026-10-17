@@ -6,7 +6,7 @@ from sqlalchemy.sql import func
 
 from app.core.tenancy import TenantScoped, company_key_column
 from app.database import Base
-from app.models.enums import IssueCategoryEnum, PriorityEnum, IssueStatusEnum
+from app.models.enums import PriorityEnum, IssueStatusEnum
 
 
 def _sa_enum(py_enum, pg_name):
@@ -32,7 +32,10 @@ class Issue(TenantScoped, Base):
     # Real FK alongside the denormalised name (migration 024). Nullable:
     # NULL means "not tied to one outlet" (shared / All Outlets).
     outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="RESTRICT"), nullable=True)
-    category = Column(_sa_enum(IssueCategoryEnum, "issue_category"), nullable=False)
+    # Category name, denormalized (like `outlet`) and kept in step on rename;
+    # category_id is the source of truth (Todo-Ops-Checklist P1, migration 044).
+    category = Column(String(200), nullable=False)
+    category_id = Column(UUID(as_uuid=True), ForeignKey("categories.id", ondelete="RESTRICT"), nullable=False, index=True)
     priority = Column(_sa_enum(PriorityEnum, "priority"), nullable=False, default=PriorityEnum.medium)
     status = Column(_sa_enum(IssueStatusEnum, "issue_status"), nullable=False, default=IssueStatusEnum.open)
     assignee = Column(String(200), default="Unassigned")
@@ -63,6 +66,8 @@ class Issue(TenantScoped, Base):
         order_by="IssuePhoto.created_at",
         lazy="selectin",
     )
+    # Behaviour (WO, guest case, module views) follows category_ref.module.
+    category_ref = relationship("Category", lazy="selectin")
     # Guest side of a "Guest Service" issue (Todo-Pilot §8); None for other categories.
     guest_case = relationship(
         "GuestCase",

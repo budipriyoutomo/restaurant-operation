@@ -54,6 +54,9 @@ WA_EVENT_PREFS = {
     "work_order_assigned":  "waWorkOrderAssigned",
     "issue_ready_to_close": "waIssueReadyToClose",
     "outlet_digest":        "waOutletDigest",      # Todo-Pilot §25
+    "temperature_excursion": "waTemperatureExcursion",   # Todo-Ops-Checklist Fase 2
+    "ops_checklist_missed":  "waOpsMissed",              # Fase 3
+    "ops_checklist_due_soon": "waOpsDueSoon",            # Fase 3
 }
 WA_MASTER_PREF = "waEnabled"
 

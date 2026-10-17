@@ -23,12 +23,14 @@ from tests.conftest import seed_user_headers
 def co(client, db, test_company):
     """A fresh company with two outlets: Dago and Riau."""
     from app.services.role_service import ensure_default_roles
+    from app.services.category_service import ensure_system_categories
     with bypass_tenant(db):
         company = Company(name="PT Banding", slug=f"banding-{uuid.uuid4().hex[:6]}")
         db.add(company)
         db.flush()
     with tenant(db, company.id):
         ensure_default_roles(db)
+        ensure_system_categories(db)
         dago = Outlet(name="Dago", code="DGO", status="operational")
         riau = Outlet(name="Riau", code="RIA", status="operational")
         db.add_all([dago, riau])
@@ -132,9 +134,10 @@ class TestDigest:
 
     def test_goes_once_a_day_to_those_who_asked(self, client, db, co):
         from app.services.outlet_comparison_service import send_digests
-        _issue(client, co["admin"], "Dago", dueDate=(date.today() - timedelta(days=2)).isoformat())
-        self._opt_in(client, co["admin"], digestDaily=True)
         now = datetime(2026, 10, 14, 7, 30, tzinfo=timezone(timedelta(hours=7)))
+        # Overdue relative to the digest's `now`, not the real clock.
+        _issue(client, co["admin"], "Dago", dueDate=(now.date() - timedelta(days=2)).isoformat())
+        self._opt_in(client, co["admin"], digestDaily=True)
 
         with tenant(db, co["company"].id):
             first = send_digests(db, now=now)

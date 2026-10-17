@@ -45,8 +45,10 @@ def alpha_data(client, db, test_company):
     _post(client, h, "/api/issues", {"title": "Freezer mati", "description": "x", "category": "Maintenance",
                                      "priority": "high", "outlet": "Jakarta", "generateTask": True,
                                      "generateWorkOrder": True, "assetId": asset["id"], "estimatedCost": 3_000_000})
-    _post(client, h, "/api/issues", {"title": "Promo", "description": "x", "category": "Marketing", "priority": "low",
-                                     "outlet": "Jakarta", "generateApproval": True, "approvalAmount": 2_000_000})
+    promo = _post(client, h, "/api/issues", {"title": "Promo", "description": "x", "category": "Marketing",
+                                             "priority": "low", "outlet": "Jakarta", "generateApproval": True,
+                                             "approvalAmount": 2_000_000})
+    _post(client, h, f"/api/issues/{promo['id']}/comments", {"body": "Menunggu desain"})
     vendor = _post(client, h, "/api/vendors", {"name": "PT Suku Cadang", "category": "Parts"})
     _post(client, h, "/api/parts", {"sku": "FLT-1", "name": "Filter", "category": "HVAC", "unitCost": 50_000,
                                     "stockQty": 1, "reorderLevel": 2, "vendorId": vendor["id"]})
@@ -67,6 +69,20 @@ def alpha_data(client, db, test_company):
     _post(client, h, "/api/approval-policies", {"approvalType": "maintenance", "minAmount": 5_000_001,
                                                 "steps": [{"order": 1, "role": "admin"}], "isActive": True})
     _post(client, h, "/api/categories", {"name": "Alpha Cat", "description": "x", "type": "operations"})
+    ops_tpl = _post(client, h, "/api/ops-checklist-templates", {"name": "Opening", "shift": "opening", "items": [
+        {"title": "Sabun"}, {"title": "Suhu chiller", "itemType": "temperature", "minValue": 0, "maxValue": 4}]})
+    _post(client, h, "/api/ops-checklist-schedules", {"templateId": ops_tpl["id"], "outlet": "Jakarta", "dueTime": "23:59"})
+    chiller = _post(client, h, "/api/assets", {"name": "Chiller", "category": "Refrigeration", "outlet": "Jakarta",
+                                                "tempMonitored": True, "tempMin": 0, "tempMax": 4})
+    _post(client, h, f"/api/assets/{chiller['id']}/temperature-logs", {"value": 9, "correctiveAction": "Dipindah"})
+    from datetime import datetime, timezone
+    from app.services.ops_checklist_service import generate_due_runs
+    assert generate_due_runs(db, now=datetime(2026, 10, 16, 3, 0, tzinfo=timezone.utc))
+    from app.models.user import User
+    mgr_id = str(db.query(User).filter(User.email == "manager@alpha.test").one().id)
+    maint = next(c for c in client.get("/api/categories", headers=h).json() if c["systemKey"] == "maintenance")
+    _post(client, h, "/api/issue-assignment-rules", {"categoryId": maint["id"], "outletId": None,
+                                                     "assigneeUserId": mgr_id})
     assert program["id"]
 
     ids = set()
@@ -82,12 +98,14 @@ def alpha_data(client, db, test_company):
 def beta_admin(client, db, alpha_data):
     from app.models.outlet import Outlet
     from app.services.role_service import ensure_default_roles
+    from app.services.category_service import ensure_system_categories
     with bypass_tenant(db):
         company = Company(name="PT Beta", slug=f"beta-{uuid.uuid4().hex[:6]}")
         db.add(company)
         db.flush()
     with tenant(db, company.id):
         ensure_default_roles(db)
+        ensure_system_categories(db)
         db.add(Outlet(name="Beta Dago", code="BDG", status="operational"))
         db.flush()
         return seed_user_headers(db, "admin@beta.test", "admin", name="Beta Admin")

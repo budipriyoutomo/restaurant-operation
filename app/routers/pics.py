@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models.category import Category
 from app.models.pic import PIC
 from app.schemas.pic import CreatePICRequest, PICResponse, UpdatePICRequest
+from app.services.assignment_service import active_user
 from app.services.audit_service import write_audit
 from app.services.auth_service import UserResponse, get_current_user, require_permission
 
@@ -22,11 +23,26 @@ def _to_response(pic: PIC) -> PICResponse:
         phone=pic.phone,
         department=pic.department,
         categories=[str(c.id) for c in pic.categories],
+        userId=str(pic.user_id) if pic.user_id else None,
+        userName=pic.user.name if pic.user else None,
     )
 
 
 def _active_pics(db: Session):
     return db.query(PIC).filter(PIC.deleted_at.is_(None))
+
+
+def _resolve_user(db: Session, user_id: Optional[str], exclude_pic_id=None):
+    """The PIC's user account (P2): active, this company's, not already another PIC's."""
+    if not user_id:
+        return None
+    user = active_user(db, user_id)
+    taken = _active_pics(db).filter(PIC.user_id == user.id)
+    if exclude_pic_id is not None:
+        taken = taken.filter(PIC.id != exclude_pic_id)
+    if taken.first() is not None:
+        raise HTTPException(status_code=409, detail=f"{user.name} is already linked to another PIC")
+    return user
 
 
 def _resolve_categories(db: Session, category_ids: List[str]) -> List[Category]:
@@ -51,12 +67,15 @@ def create_pic(req: CreatePICRequest, db: Session = Depends(get_db), _: UserResp
     if existing:
         raise HTTPException(status_code=409, detail=f"Email '{req.email}' already exists")
     cats = _resolve_categories(db, req.categories)
-    pic = PIC(name=req.name, email=req.email, phone=req.phone, department=req.department)
+    user = _resolve_user(db, req.userId)
+    pic = PIC(name=req.name, email=req.email, phone=req.phone, department=req.department,
+              user_id=user.id if user else None)
     pic.categories = cats
     db.add(pic)
     db.flush()
     write_audit(db, table_name="pics", record_id=str(pic.id), action="create",
-                new_value={"name": pic.name, "email": pic.email, "department": pic.department})
+                new_value={"name": pic.name, "email": pic.email, "department": pic.department,
+                           "userId": str(pic.user_id) if pic.user_id else None})
     db.commit()
     db.refresh(pic)
     return _to_response(pic)
@@ -86,9 +105,13 @@ def update_pic(pic_id: str, req: UpdatePICRequest, db: Session = Depends(get_db)
         pic.department = req.department
     if req.categories is not None:
         pic.categories = _resolve_categories(db, req.categories)
+    if "userId" in req.model_fields_set:
+        user = _resolve_user(db, req.userId, exclude_pic_id=pic.id)
+        pic.user_id = user.id if user else None
     write_audit(db, table_name="pics", record_id=str(pic.id), action="update",
                 old_value=old,
-                new_value={"name": pic.name, "email": pic.email, "department": pic.department})
+                new_value={"name": pic.name, "email": pic.email, "department": pic.department,
+                           "userId": str(pic.user_id) if pic.user_id else None})
     db.commit()
     db.refresh(pic)
     return _to_response(pic)

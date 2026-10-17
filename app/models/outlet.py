@@ -27,3 +27,6 @@ class Outlet(TenantScoped, Base):
     deleted_at = Column(TIMESTAMP(timezone=True), nullable=True, default=None)
     # IDR. NULL = use settings.APPROVAL_THRESHOLD_DEFAULT (migration 033).
     approval_threshold = Column(BigInteger, nullable=True)
+    # IANA zone of the outlet's wall clock — daily checklist times and dates
+    # (Todo-Ops-Checklist Fase 1, migration 047). Bali = Asia/Makassar.
+    timezone = Column(String(64), nullable=False, default="Asia/Jakarta", server_default="Asia/Jakarta")
