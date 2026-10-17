@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # Rate limiting (requests per minute per IP)
     RATE_LIMIT_DEFAULT: str = "60/minute"
     RATE_LIMIT_WRITE: str = "20/minute"
+    # Per-IP limits on the public auth endpoints (app/core/rate_limit.py).
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_LOGIN: str = "10/minute"
+    RATE_LIMIT_FORGOT_PASSWORD: str = "5/minute"
+    RATE_LIMIT_RESET_PASSWORD: str = "10/minute"
 
     # File storage (Tier 5.1 — work-order photos).
     # STORAGE_BACKEND=local writes under STORAGE_DIR; the abstraction leaves room
@@ -58,6 +63,10 @@ class Settings(BaseSettings):
     SMTP_TIMEOUT: int = 15
     # Public frontend URL, used for links in emails. Empty = no link.
     APP_URL: str = ""
+    # Forgot password by email: link lifetime, and links per user per hour.
+    # Needs email (SMTP_HOST) and APP_URL; without them no link is sent.
+    PASSWORD_RESET_EXPIRE_MINUTES: int = 60
+    PASSWORD_RESET_MAX_PER_HOUR: int = 3
 
     # Guest Service KPI (Todo-Pilot §8): a complaint should get a first response
     # within this many minutes of being reported.

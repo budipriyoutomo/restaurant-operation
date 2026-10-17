@@ -30,6 +30,7 @@ def list_approvals(
     status: Optional[str] = Query(None),
     issue_id: Optional[uuid.UUID] = Query(None),
     q: Optional[str] = Query(None, description="Search number, title, requester or outlet"),
+    outlet: Optional[str] = Query(None, description="One outlet (the top bar's outlet filter)"),
     page: Page = Depends(),
     db: Session = Depends(get_db),
     current_user: UserResponse = Depends(require_permission("approvals", "view")),
@@ -38,6 +39,8 @@ def list_approvals(
     query = approval_service.approvals_query(db, type, status, user=current_user)
     if issue_id:
         query = query.filter(ApprovalRequest.issue_id == issue_id)
+    if outlet:
+        query = query.filter(ApprovalRequest.outlet == outlet)
     if q and q.strip():
         p = like_pattern(q)
         query = query.filter(or_(ApprovalRequest.number.ilike(p), ApprovalRequest.title.ilike(p),

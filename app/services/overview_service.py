@@ -38,8 +38,9 @@ def _v(x) -> str:
     return x.value if hasattr(x, "value") else str(x)
 
 
-def overview(db: Session, user) -> Dict[str, Any]:
-    q = scoped_query(db, Issue, user)
+def overview(db: Session, user, outlet: Optional[str] = None) -> Dict[str, Any]:
+    """Executive dashboard numbers; `outlet` = the top bar's outlet filter."""
+    q = _at(scoped_query(db, Issue, user), Issue, outlet)
     by_category = {_v(c): n for c, n in q.with_entities(Issue.category, func.count()).group_by(Issue.category)}
     by_outlet = {(o or "—"): n for o, n in q.with_entities(Issue.outlet, func.count()).group_by(Issue.outlet)}
     urgent = (q.filter(_in_progress(), Issue.priority.in_(("critical", "high")))
@@ -61,9 +62,9 @@ def overview(db: Session, user) -> Dict[str, Any]:
         "approvals": None,
     }
     if has_permission(user, "tasks"):
-        out["tasks"] = {"active": _active_tasks(db, user)}
+        out["tasks"] = {"active": _active_tasks(db, user, outlet)}
     if has_permission(user, "approvals"):
-        pending = scoped_query(db, ApprovalRequest, user).filter(ApprovalRequest.status == "pending")
+        pending = _at(scoped_query(db, ApprovalRequest, user), ApprovalRequest, outlet).filter(ApprovalRequest.status == "pending")
         out["approvals"] = {
             "pending": pending.count(),
             "pendingByType": {_v(t): n for t, n in
@@ -72,16 +73,23 @@ def overview(db: Session, user) -> Dict[str, Any]:
     return out
 
 
-def _active_tasks(db: Session, user) -> int:
-    return scoped_query(db, Task, user).filter(Task.status.notin_(tuple(TASK_TERMINAL))).count()
+def _active_tasks(db: Session, user, outlet: Optional[str] = None) -> int:
+    return _at(scoped_query(db, Task, user), Task, outlet).filter(Task.status.notin_(tuple(TASK_TERMINAL))).count()
 
 
-def counts(db: Session, user) -> Dict[str, Optional[int]]:
-    """Menu badges; None where the role cannot open that list."""
+def _at(query, model, outlet: Optional[str]):
+    """Narrow an (already outlet-scoped) query to one outlet, when asked."""
+    return query.filter(model.outlet == outlet) if outlet else query
+
+
+def counts(db: Session, user, outlet: Optional[str] = None) -> Dict[str, Optional[int]]:
+    """Menu badges; None where the role cannot open that list. `outlet` = the
+    top bar's outlet filter, so the badges match the lists."""
     can_issues = any(has_permission(user, m) for m in ISSUE_READ_MODULES)
     return {
-        "issuesInProgress": scoped_query(db, Issue, user).filter(_in_progress()).count() if can_issues else None,
-        "tasksActive": _active_tasks(db, user) if has_permission(user, "tasks") else None,
-        "approvalsPending": scoped_query(db, ApprovalRequest, user).filter(ApprovalRequest.status == "pending").count()
+        "issuesInProgress": _at(scoped_query(db, Issue, user), Issue, outlet).filter(_in_progress()).count() if can_issues else None,
+        "tasksActive": _active_tasks(db, user, outlet) if has_permission(user, "tasks") else None,
+        "approvalsPending": _at(scoped_query(db, ApprovalRequest, user), ApprovalRequest, outlet)
+        .filter(ApprovalRequest.status == "pending").count()
         if has_permission(user, "approvals") else None,
     }

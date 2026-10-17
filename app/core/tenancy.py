@@ -44,7 +44,7 @@ _COMPANY = "tenant_company_id"
 _BYPASS = "tenant_bypass"
 
 # Tables that belong to no company.
-GLOBAL_TABLES = frozenset({"companies"})
+GLOBAL_TABLES = frozenset({"companies", "password_reset_tokens"})   # reset links: before sign-in, platform admins too
 # Pure link tables: both sides are tenant rows, so they are scoped through them.
 ASSOCIATION_TABLES = frozenset({"user_outlets", "pic_categories", "role_outlets"})
 

@@ -24,6 +24,7 @@ from app.models.procurement import (
 from app.models.budget import Budget
 from app.models.role import Role, role_outlets
 from app.models.user import User, user_outlets
+from app.models.password_reset import PasswordResetToken
 from app.models.whatsapp import WhatsAppMessage
 from app.models.guest_case import GuestCase
 from app.models.training_enrollment import TrainingEnrollment
@@ -67,5 +68,5 @@ __all__ = [
     "ProcurementNumberSequence",
     "Budget",
     "Role", "role_outlets",
-    "User", "user_outlets",
+    "User", "PasswordResetToken", "user_outlets",
 ]

@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, ForeignKey, ForeignKeyConstraint, String, Boolean, TIMESTAMP, Table
+from sqlalchemy import Column, ForeignKey, ForeignKeyConstraint, Integer, String, Boolean, TIMESTAMP, Table
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -39,6 +39,9 @@ class User(TenantScoped, Base):
     is_active = Column(Boolean, nullable=False, default=True)
     # SaaS operator: manages companies only, never sees company data.
     is_platform_admin = Column(Boolean, nullable=False, default=False, server_default="false")
+    # In every JWT ("ver"); bumped when the password changes, which signs out
+    # every session issued before (migration 054).
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
     preferences = Column(JSONB, nullable=False, default=dict)
     # Digits with country code, e.g. 6281234567890 (Todo-Pilot §4). NULL = none.
     whatsapp_number = Column(String(20), nullable=True)

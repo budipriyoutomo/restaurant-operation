@@ -161,3 +161,48 @@ class TestTaskBoard:
         rows = {t["issueId"]: t for t in client.get("/api/tasks", headers=co["admin"]).json()}
         assert rows[data["closed"]["id"]]["issueStatus"] == "closed"
         assert rows[data["resolved"]["id"]]["issueStatus"] == "resolved"
+
+
+class TestOutletFilter:
+    """The top bar's outlet filter (Todo-UI "Filter outlet"): every list and the
+    menu badges narrow to one outlet; outlet scoping still applies underneath."""
+
+    def test_tasks_of_one_outlet(self, client, co, data):
+        h = co["admin"]
+        riau = client.get("/api/tasks?outlet=Riau", headers=h)
+        assert [t["issueId"] for t in riau.json()] == [data["closed"]["id"]] and riau.headers["X-Total-Count"] == "1"
+        assert [t["issueId"] for t in client.get("/api/tasks?outlet=Dago", headers=h).json()] == [data["resolved"]["id"]]
+
+    def test_approvals_of_one_outlet(self, client, co, data):
+        h = co["admin"]
+        assert len(client.get("/api/approvals?outlet=Dago", headers=h).json()) == 1
+        res = client.get("/api/approvals?outlet=Riau", headers=h)
+        assert res.json() == [] and res.headers["X-Total-Count"] == "0"
+
+    def test_counts_of_one_outlet(self, client, co, data):
+        h = co["admin"]
+        assert client.get("/api/counts?outlet=Dago", headers=h).json() == {"issuesInProgress": 3, "tasksActive": 0, "approvalsPending": 1}
+        assert client.get("/api/counts?outlet=Riau", headers=h).json() == {"issuesInProgress": 0, "tasksActive": 0, "approvalsPending": 0}
+
+    def test_my_work_of_one_outlet(self, client, co, data):
+        h = co["admin"]
+        assert client.get("/api/my-work?outlet=Dago", headers=h).json()["readyToClose"]["count"] == 2
+        assert client.get("/api/my-work?outlet=Riau", headers=h).json()["readyToClose"]["count"] == 0
+
+    def test_dashboard_of_one_outlet(self, client, co, data):
+        h = co["admin"]
+        riau = client.get("/api/analytics/overview?outlet=Riau", headers=h).json()
+        assert riau["issues"]["total"] == 1 and riau["issues"]["inProgress"] == 0
+        assert riau["issues"]["byOutlet"] == {"Riau": 1}
+        assert riau["approvals"]["pending"] == 0
+        dago = client.get("/api/analytics/overview?outlet=Dago", headers=h).json()
+        assert dago["issues"]["total"] == 5 and dago["approvals"]["pending"] == 1
+
+    def test_filter_cannot_widen_outlet_scope(self, client, db, co, data):
+        from app.models.role import Role
+        with tenant(db, co["company"].id):
+            db.query(Role).filter(Role.key == "staff").one().permissions = {"issues": "view", "tasks": "view"}
+            db.flush()
+        # Staff only sees Riau: asking for Dago gives nothing, not Dago's rows.
+        assert client.get("/api/tasks?outlet=Dago", headers=co["staff"]).json() == []
+        assert client.get("/api/counts?outlet=Dago", headers=co["staff"]).json()["issuesInProgress"] == 0

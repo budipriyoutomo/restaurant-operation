@@ -17,6 +17,11 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base, get_db
 from app.main import app
+from app.core.rate_limit import limiter as _limiter
+
+# Many tests sign in from the same TestClient address; the rate-limit tests
+# switch it back on (tests/test_integration_auth_rate_limit.py).
+_limiter.enabled = False
 
 
 # ---------------------------------------------------------------------------

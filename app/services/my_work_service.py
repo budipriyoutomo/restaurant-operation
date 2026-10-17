@@ -119,9 +119,13 @@ def _ops_checklists(db: Session, user: UserResponse) -> List[Dict[str, Any]]:
             for r in my_open_runs(db, user)]
 
 
-def my_work(db: Session, user: UserResponse, limit: int = 20) -> Dict[str, Any]:
+def my_work(db: Session, user: UserResponse, limit: int = 20, outlet: Optional[str] = None) -> Dict[str, Any]:
+    """`outlet` = the top bar's outlet filter; every item carries its outlet."""
     def gate(ok: bool, fn):
-        return _section(fn(db, user), limit) if ok else None
+        if not ok:
+            return None
+        items = fn(db, user)
+        return _section([i for i in items if i["outlet"] == outlet] if outlet else items, limit)
 
     return {
         "approvals":    gate(has_permission(user, "approvals", "manage"), _awaiting_my_decision),

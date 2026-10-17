@@ -31,7 +31,7 @@ Everything is under `backend/`:
 | `docker/entrypoint.sh` | waits for DB → `alembic upgrade head` → (optional) seed → start |
 | `.env.production.example` | template for `.env.production` (never commit the real one) |
 | `Caddyfile` | optional automatic-HTTPS reverse proxy |
-| `scripts/set_password.py` | rotate a user's password (no API endpoint for this) |
+| `scripts/set_password.py` | rotate a user's password from the shell (break-glass when no admin can sign in; in the app: Settings → Security, Users → Reset password) |
 
 ### Steps
 
@@ -185,6 +185,32 @@ each one off under **Settings → Email**. Mail is sent after the database commi
 on a background thread, so an SMTP outage never fails a user's action; failures
 are logged (`dc logs api`). Leave `SMTP_HOST` empty to stay in-app only, or set
 `EMAIL_BACKEND=console` to log emails instead of sending them.
+
+### Forgot password
+
+"Forgot password?" on the sign-in page emails a one-time link to
+`APP_URL/reset-password?token=…`. It needs **both** `SMTP_HOST` and `APP_URL`;
+without them the request is accepted but nothing is sent (a warning is logged),
+and users must ask an admin (Users → Reset password). The link is valid for
+`PASSWORD_RESET_EXPIRE_MINUTES` (default 60), works once, and at most
+`PASSWORD_RESET_MAX_PER_HOUR` (default 3) links are sent per user per hour.
+The endpoint answers the same for unknown emails, so it does not reveal who
+has an account. Requires migration 053 (applied automatically on boot).
+
+Every password change — Settings → Security, Users → Reset password, the
+forgot-password link or `scripts/set_password.py` — **signs the user out of
+every other session** (`users.token_version`, migration 054). Changing your own
+password keeps the device you did it on signed in.
+
+### Rate limits on sign-in
+
+Per client IP, configurable in `.env.production`: `RATE_LIMIT_LOGIN`
+(default `10/minute`), `RATE_LIMIT_FORGOT_PASSWORD` (`5/minute`),
+`RATE_LIMIT_RESET_PASSWORD` (`10/minute`); over the limit the API answers 429
+with `Retry-After`. The real client IP comes from the proxy's
+`X-Forwarded-For` (`FORWARDED_ALLOW_IPS`), so keep the API port bound to
+127.0.0.1 behind Caddy/Nginx. Counters are per gunicorn worker (in memory), so
+the effective ceiling is limit × `WEB_CONCURRENCY`.
 
 ### WhatsApp notifications (optional)
 WhatsApp goes out through a self-hosted [WuzAPI](https://github.com/asternic/wuzapi)

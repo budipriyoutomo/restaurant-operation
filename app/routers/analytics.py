@@ -164,9 +164,10 @@ def compare_outlets(
 
 @router.get("/overview")
 def get_overview(
+    outlet: Optional[str] = Query(None, description="One outlet (the top bar's outlet filter)"),
     db: Session = Depends(get_db),
     current_user: UserResponse = Depends(require_permission("dashboard", "view", ("analytics", "view"))),
 ):
     """Executive dashboard numbers, counted by the database (Todo-Pilot §22)."""
     from app.services.overview_service import overview
-    return overview(db, current_user)
+    return overview(db, current_user, outlet)

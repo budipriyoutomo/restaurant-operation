@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Set (rotate) a user's password from the command line.
 
-There is no self-service password-change endpoint, so this is the supported way
-to rotate the seeded admin credentials in production.
+Break-glass path for when no admin can sign in (in the app: Settings → Security
+for your own password, Users → Reset password for someone else).
 
 Usage (from the backend/ directory or inside the api container):
     python -m scripts.set_password admin@restaurant.com
@@ -25,7 +25,7 @@ load_dotenv()
 from app.core.tenancy import bypass_tenant
 from app.database import SessionLocal
 from app.models.user import User
-from app.services.auth_service import hash_password
+from app.services.auth_service import set_password
 
 
 def main() -> int:
@@ -45,7 +45,7 @@ def main() -> int:
             return 1
         role = user.role                        # read before commit expires it
         with bypass_tenant(db):
-            user.password_hash = hash_password(new_password)
+            set_password(db, user, new_password)       # also signs out every session
             db.commit()
         print(f"Password updated for {args.email} (role: {role})")
         if not args.password:

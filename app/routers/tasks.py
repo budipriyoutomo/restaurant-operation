@@ -47,6 +47,7 @@ def list_tasks(
     q: Optional[str] = Query(None, description="Search number, title, issue number or assignee"),
     priority: Optional[str] = Query(None),
     late: bool = Query(False, description="Only open tasks past their due date"),
+    outlet: Optional[str] = Query(None, description="One outlet (the top bar's outlet filter)"),
     page: Page = Depends(),
     db: Session = Depends(get_db),
     current_user: UserResponse = Depends(require_permission("tasks", "view")),
@@ -59,6 +60,8 @@ def list_tasks(
         query = query.filter(Task.issue_id == issue_id)
     if priority:
         query = query.filter(Task.priority == priority)
+    if outlet:
+        query = query.filter(Task.outlet == outlet)
     if late:
         from datetime import date as _date
         from app.services.issue_closure_service import TASK_TERMINAL

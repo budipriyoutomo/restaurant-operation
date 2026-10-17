@@ -5,6 +5,7 @@ Call get_current_user() on protected routes; call get_optional_user()
 on routes that want user context but don't require it.
 """
 
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
@@ -12,7 +13,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import permissions as perm
@@ -89,9 +90,9 @@ def verify_password(plain: str, hashed: str) -> bool:
     return _pwd.verify(plain, hashed)
 
 
-def create_access_token(user_id: str, email: str, role: str) -> str:
+def create_access_token(user_id: str, email: str, role: str, version: int = 0) -> str:
     expire = datetime.now(timezone.utc) + timedelta(hours=settings.JWT_EXPIRE_HOURS)
-    payload = {"sub": user_id, "email": email, "role": role, "exp": expire}
+    payload = {"sub": user_id, "email": email, "role": role, "ver": version, "exp": expire}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -154,12 +155,14 @@ def _authenticate_request(db: Session, token: Optional[str]) -> Optional[User]:
     """
     if not token:
         return None
-    user_id = _decode_token(token).get("sub")
+    claims = _decode_token(token)
+    user_id = claims.get("sub")
     if not user_id:
         return None
     with bypass_tenant(db):
         user = db.query(User).filter(User.id == user_id, User.is_active == True).first()  # noqa: E712
-    if user is None:
+    # A password change bumps token_version; tokens without "ver" predate it (0).
+    if user is None or claims.get("ver", 0) != (user.token_version or 0):
         return None
     if user.is_platform_admin:
         set_tenant(db, None)
@@ -300,6 +303,57 @@ def _resolve_outlets(db: Session, outlet_ids: List[str]) -> list:
     return outlets
 
 
+# ── Passwords ────────────────────────────────────────────────────────────────
+
+PASSWORD_MIN_LENGTH = 10
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=200)
+
+
+class ResetPasswordRequest(BaseModel):
+    password: Optional[str] = Field(default=None, min_length=PASSWORD_MIN_LENGTH, max_length=200)
+
+
+class ResetPasswordResponse(BaseModel):
+    password: Optional[str] = None      # only when generated — shown once, never stored in clear
+
+
+def set_password(db: Session, user: User, password: str) -> None:
+    """Store a new password and sign out every existing session of the user.
+    The caller commits."""
+    user.password_hash = hash_password(password)
+    user.token_version = (user.token_version or 0) + 1
+
+
+def change_own_password(db: Session, user_id: str, req: ChangePasswordRequest) -> TokenResponse:
+    with bypass_tenant(db):                     # platform admins belong to no company
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user or not verify_password(req.current_password, user.password_hash):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+        if req.new_password == req.current_password:
+            raise HTTPException(status_code=400, detail="New password must differ from the current one")
+        set_password(db, user, req.new_password)
+        db.commit()
+        return _token_for(user)
+
+
+def reset_user_password(db: Session, user_id: str, req: ResetPasswordRequest, caller_id: str) -> ResetPasswordResponse:
+    """Set another user's password; generated when not given. Tenant-scoped, so a
+    user of another company is a 404."""
+    if user_id == caller_id:
+        raise HTTPException(status_code=400, detail="Use change password for your own account")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    password = req.password or secrets.token_urlsafe(12)
+    set_password(db, user, password)
+    db.commit()
+    return ResetPasswordResponse(password=None if req.password else password)
+
+
 def delete_user(db: Session, user_id: str, caller_id: str) -> None:
     if user_id == caller_id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
@@ -317,8 +371,11 @@ def login_user(db: Session, req: LoginRequest) -> TokenResponse:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user.is_platform_admin and (user.company is None or not user.company.is_active):
         raise HTTPException(status_code=403, detail="Your company's account is inactive. Contact support.")
-    token = create_access_token(str(user.id), user.email, user.role)
+    return _token_for(user)
+
+
+def _token_for(user: User) -> TokenResponse:
     return TokenResponse(
-        access_token=token,
+        access_token=create_access_token(str(user.id), user.email, user.role, user.token_version or 0),
         expires_in=settings.JWT_EXPIRE_HOURS * 3600,
     )

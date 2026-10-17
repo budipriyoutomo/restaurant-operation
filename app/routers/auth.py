@@ -1,24 +1,32 @@
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.config import settings
+from app.core.rate_limit import limiter
 from app.database import get_db
 from app.models.user import User
 from app.services.auth_service import (
+    ChangePasswordRequest,
     LoginRequest,
+    PASSWORD_MIN_LENGTH,
     RegisterRequest,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     TokenResponse,
     UpdateUserRequest,
     UserResponse,
     _user_to_response,
+    change_own_password,
     delete_user,
     get_current_user,
     login_user,
     parse_whatsapp_number,
     register_user,
     require_permission,
+    reset_user_password,
     update_user,
 )
 from app.services.role_service import assert_can_assign_role, assert_can_grant
@@ -41,9 +49,37 @@ def register(
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(req: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit(settings.RATE_LIMIT_LOGIN)
+def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate and receive a JWT access token."""
     return login_user(db, req)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(max_length=200)
+
+
+class ResetWithTokenRequest(BaseModel):
+    token: str = Field(max_length=200)
+    new_password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=200)
+
+
+@router.post("/forgot-password", status_code=202)
+@limiter.limit(settings.RATE_LIMIT_FORGOT_PASSWORD)
+def forgot_password(request: Request, req: ForgotPasswordRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """Email a one-time reset link. Same answer whether or not the account
+    exists, so it cannot be used to discover who has an account."""
+    from app.services.password_reset_service import request_reset
+    request_reset(db, req.email)
+    return {"detail": "If an account exists for this email, a reset link has been sent."}
+
+
+@router.post("/reset-password", status_code=204)
+@limiter.limit(settings.RATE_LIMIT_RESET_PASSWORD)
+def reset_password_with_token(request: Request, req: ResetWithTokenRequest, db: Session = Depends(get_db)):
+    """Set a new password with the token from the reset email."""
+    from app.services.password_reset_service import reset_password
+    reset_password(db, req.token, req.new_password)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -124,6 +160,21 @@ def delete_user_endpoint(
     delete_user(db, user_id, caller.id)
 
 
+@router.post("/users/{user_id}/reset-password", response_model=ResetPasswordResponse)
+def reset_password_endpoint(
+    user_id: str,
+    req: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+    caller: UserResponse = Depends(require_permission("users", "manage")),
+):
+    """Set another user's password. Requires users:manage; the generated
+    password (when none is given) is returned once."""
+    if user_id == caller.id:
+        raise HTTPException(status_code=400, detail="Use change password for your own account")
+    _assert_can_manage_user(db, caller, user_id)
+    return reset_user_password(db, user_id, req, caller.id)
+
+
 def _assert_can_manage_user(db: Session, caller: UserResponse, user_id: str) -> None:
     """A delegated user manager must not be able to touch someone more
     privileged than themselves (e.g. deactivate an admin)."""
@@ -131,6 +182,17 @@ def _assert_can_manage_user(db: Session, caller: UserResponse, user_id: str) -> 
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     assert_can_assign_role(db, caller, target.role)
+
+
+@router.post("/me/password", response_model=TokenResponse)
+def change_my_password(
+    req: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Change the caller's own password; the current one is required. Every
+    other session is signed out; the returned token keeps this one signed in."""
+    return change_own_password(db, current_user.id, req)
 
 
 class PreferencesBody(BaseModel):
