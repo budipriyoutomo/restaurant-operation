@@ -43,10 +43,11 @@ def main() -> int:
         if not user:
             print(f"No user with email {args.email!r}", file=sys.stderr)
             return 1
+        role = user.role                        # read before commit expires it
         with bypass_tenant(db):
             user.password_hash = hash_password(new_password)
             db.commit()
-        print(f"Password updated for {args.email} (role: {user.role})")
+        print(f"Password updated for {args.email} (role: {role})")
         if not args.password:
             print(f"New password: {new_password}")
         return 0
